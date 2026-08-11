@@ -1,3 +1,6 @@
+# 这是开源阅读原版的最后一个版本
+这里做一个备份和补档
+
 # [English](English.md) [中文](README.md)
 
 [![icon_android](https://github.com/gedoor/gedoor.github.io/blob/master/static/img/legado/icon_android.png)](https://play.google.com/store/apps/details?id=io.legado.play.release)
