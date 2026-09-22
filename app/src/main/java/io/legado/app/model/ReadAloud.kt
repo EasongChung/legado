@@ -6,6 +6,7 @@ import android.os.Bundle
 import io.legado.app.constant.AppLog
 import io.legado.app.constant.EventBus
 import io.legado.app.constant.IntentAction
+import io.legado.app.constant.Status
 import io.legado.app.data.appDb
 import io.legado.app.data.entities.HttpTTS
 import io.legado.app.help.config.AppConfig
@@ -99,6 +100,7 @@ object ReadAloud {
             intent.action = IntentAction.stop
             context.startForegroundServiceCompat(intent)
         }
+        postEvent(EventBus.ALOUD_STATE, Status.STOP)
     }
 
     fun prevParagraph(context: Context) {
@@ -106,6 +108,8 @@ object ReadAloud {
             val intent = Intent(context, aloudClass)
             intent.action = IntentAction.prevParagraph
             context.startForegroundServiceCompat(intent)
+        } else {
+            postEvent(EventBus.DOC_READ_PREV, true)
         }
     }
 
@@ -114,6 +118,8 @@ object ReadAloud {
             val intent = Intent(context, aloudClass)
             intent.action = IntentAction.nextParagraph
             context.startForegroundServiceCompat(intent)
+        } else {
+            postEvent(EventBus.DOC_READ_NEXT, true)
         }
     }
 

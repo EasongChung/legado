@@ -174,7 +174,12 @@ class ReadAloudDialog : BaseDialogFragment(R.layout.dialog_read_aloud) {
     }
 
     private fun upPlayState() {
-        if (!BaseReadAloudService.pause) {
+        val isPause = if (BaseReadAloudService.isRun) {
+            BaseReadAloudService.pause
+        } else {
+            (activity as? ReadBookActivity)?.isDocReadingAloud != true
+        }
+        if (!isPause) {
             binding.ivPlayPause.setImageResource(R.drawable.ic_pause_24dp)
             binding.ivPlayPause.contentDescription = getString(R.string.pause)
         } else {

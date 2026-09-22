@@ -222,7 +222,7 @@ class ReadBookActivity : BaseReadBookActivity(),
     private var tts: TTS? = null
     private var pdfPageView: PdfPageView? = null
     private var docxPageView: DocxPageView? = null
-    private var isDocReadingAloud = false
+    internal var isDocReadingAloud = false
     private var docSentenceIndex = 0
     val textActionMenu: TextActionMenu by lazy {
         TextActionMenu(this, this)
@@ -1095,7 +1095,10 @@ class ReadBookActivity : BaseReadBookActivity(),
             if (docxPageView == null) {
                 docxPageView = DocxPageView(this).apply {
                     onCenterClickListener = { showActionMenu() }
-                    onSentenceClickListener = { text ->
+                    onSentenceClickListener = { text, index ->
+                        if (index >= 0) {
+                            docSentenceIndex = index
+                        }
                         speakDocumentSentence(text)
                     }
                 }
@@ -1119,9 +1122,9 @@ class ReadBookActivity : BaseReadBookActivity(),
     }
 
     private fun startDocumentReadAloud() {
-        val pdf = pdfPageView
-        if (pdf != null && ReadBook.book?.isPdf == true) {
-            isDocReadingAloud = true
+        val book = ReadBook.book ?: return
+        if (book.isPdf) {
+            val pdf = pdfPageView ?: return
             val sentences = pdf.getCurrentPageSentences()
             if (sentences.isEmpty()) {
                 toastOnUi("当前页面未提取到朗读文本")
@@ -1130,9 +1133,24 @@ class ReadBookActivity : BaseReadBookActivity(),
             if (docSentenceIndex !in sentences.indices) {
                 docSentenceIndex = 0
             }
+            isDocReadingAloud = true
+            postEvent(EventBus.ALOUD_STATE, Status.PLAY)
+            showReadAloudDialog()
             readNextPdfSentence()
-        } else {
-            toastOnUi("开始朗读文档")
+        } else if (book.isDocx) {
+            val docx = docxPageView ?: return
+            val sentences = docx.getSentences()
+            if (sentences.isEmpty()) {
+                toastOnUi("当前文档未提取到朗读文本")
+                return
+            }
+            if (docSentenceIndex !in sentences.indices) {
+                docSentenceIndex = if (docx.currentSentenceIndex in sentences.indices) docx.currentSentenceIndex else 0
+            }
+            isDocReadingAloud = true
+            postEvent(EventBus.ALOUD_STATE, Status.PLAY)
+            showReadAloudDialog()
+            readNextDocxSentence()
         }
     }
 
@@ -1143,20 +1161,12 @@ class ReadBookActivity : BaseReadBookActivity(),
         if (docSentenceIndex < sentences.size) {
             val sentence = sentences[docSentenceIndex]
             pdf.highlightSentenceIndex(docSentenceIndex)
-            if (tts == null) {
-                tts = TTS()
-            }
-            tts?.setSpeakStateListener(object : io.legado.app.help.TTS.SpeakStateListener {
-                override fun onStart() {}
-
-                override fun onDone() {
-                    docSentenceIndex++
-                    runOnUiThread {
-                        readNextPdfSentence()
-                    }
+            speakTtsWithCallback(sentence.text) {
+                docSentenceIndex++
+                runOnUiThread {
+                    readNextPdfSentence()
                 }
-            })
-            tts?.speak(sentence.text)
+            }
         } else {
             // 当前页读完，翻页并继续下一页
             docSentenceIndex = 0
@@ -1166,6 +1176,86 @@ class ReadBookActivity : BaseReadBookActivity(),
             }, 600)
         }
     }
+
+    private fun readNextDocxSentence() {
+        val docx = docxPageView ?: return
+        if (!isDocReadingAloud) return
+        val sentences = docx.getSentences()
+        if (docSentenceIndex in sentences.indices) {
+            val text = sentences[docSentenceIndex]
+            docx.highlightIndex(docSentenceIndex)
+            speakTtsWithCallback(text) {
+                docSentenceIndex++
+                runOnUiThread {
+                    readNextDocxSentence()
+                }
+            }
+        } else {
+            isDocReadingAloud = false
+            postEvent(EventBus.ALOUD_STATE, Status.STOP)
+            toastOnUi("文档朗读完毕")
+        }
+    }
+
+    private fun speakTtsWithCallback(text: String, onDone: () -> Unit) {
+        if (tts == null) {
+            tts = TTS()
+        }
+        tts?.setSpeakStateListener(object : io.legado.app.help.TTS.SpeakStateListener {
+            override fun onStart() {}
+
+            override fun onDone() {
+                onDone.invoke()
+            }
+        })
+        tts?.speak(text)
+    }
+
+    private fun readPrevDocSentence() {
+        val book = ReadBook.book ?: return
+        if (book.isPdf) {
+            val pdf = pdfPageView ?: return
+            val sentences = pdf.getCurrentPageSentences()
+            if (docSentenceIndex > 0) {
+                docSentenceIndex--
+                readNextPdfSentence()
+            } else {
+                pdf.prevPage()
+                handler.postDelayed({
+                    val newSentences = pdf.getCurrentPageSentences()
+                    docSentenceIndex = (newSentences.size - 1).coerceAtLeast(0)
+                    readNextPdfSentence()
+                }, 600)
+            }
+        } else if (book.isDocx) {
+            if (docSentenceIndex > 0) {
+                docSentenceIndex--
+            }
+            readNextDocxSentence()
+        }
+    }
+
+    private fun readNextDocSentence() {
+        val book = ReadBook.book ?: return
+        if (book.isPdf) {
+            val pdf = pdfPageView ?: return
+            val sentences = pdf.getCurrentPageSentences()
+            if (docSentenceIndex < sentences.size - 1) {
+                docSentenceIndex++
+                readNextPdfSentence()
+            } else {
+                docSentenceIndex = 0
+                pdf.nextPage()
+                handler.postDelayed({
+                    readNextPdfSentence()
+                }, 600)
+            }
+        } else if (book.isDocx) {
+            docSentenceIndex++
+            readNextDocxSentence()
+        }
+    }
+
 
     override fun upPageAnim(upRecorder: Boolean) {
         lifecycleScope.launch {
@@ -1247,7 +1337,7 @@ class ReadBookActivity : BaseReadBookActivity(),
 
     override fun showActionMenu() {
         when {
-            BaseReadAloudService.isRun -> showReadAloudDialog()
+            BaseReadAloudService.isRun || isDocReadingAloud -> showReadAloudDialog()
             isAutoPage -> showDialogFragment<AutoReadDialog>()
             isShowingSearchResult -> binding.searchMenu.runMenuIn()
             else -> binding.readMenu.runMenuIn()
@@ -1470,6 +1560,7 @@ class ReadBookActivity : BaseReadBookActivity(),
             if (isDocReadingAloud) {
                 isDocReadingAloud = false
                 tts?.stop()
+                postEvent(EventBus.ALOUD_STATE, Status.PAUSE)
                 toastOnUi("已暂停朗读")
             } else {
                 startDocumentReadAloud()
@@ -1811,6 +1902,10 @@ class ReadBookActivity : BaseReadBookActivity(),
         }
         observeEvent<Int>(EventBus.ALOUD_STATE) {
             if (it == Status.STOP || it == Status.PAUSE) {
+                if (isDocReadingAloud && it == Status.STOP) {
+                    isDocReadingAloud = false
+                    tts?.stop()
+                }
                 ReadBook.curTextChapter?.let { textChapter ->
                     val page = textChapter.getPageByReadPos(ReadBook.durChapterPos)
                     if (page != null) {
@@ -1820,6 +1915,17 @@ class ReadBookActivity : BaseReadBookActivity(),
                 }
             }
         }
+        observeEvent<Boolean>(EventBus.DOC_READ_PREV) {
+            if (isDocReadingAloud) {
+                readPrevDocSentence()
+            }
+        }
+        observeEvent<Boolean>(EventBus.DOC_READ_NEXT) {
+            if (isDocReadingAloud) {
+                readNextDocSentence()
+            }
+        }
+
         observeEventSticky<Int>(EventBus.TTS_PROGRESS) { chapterStart ->
             lifecycleScope.launch(IO) {
                 if (BaseReadAloudService.isPlay()) {

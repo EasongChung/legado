@@ -16,14 +16,19 @@ import javax.xml.parsers.DocumentBuilderFactory
  * 覆盖：段落对齐/首行缩进/行距、加粗/斜体/下划线/字号/颜色、图片（base64）、表格。
  * 同时注入点读与高亮控制脚本。
  */
+data class DocxResult(
+    val html: String,
+    val sentences: List<String>
+)
+
 object DocxHtmlConverter {
 
     private const val NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
     /**
-     * 将 docx 文件转成 HTML 字符串
+     * 将 docx 文件转成 HTML 字符串与句子/段落列表
      */
-    fun convert(filePath: String): String {
+    fun convert(filePath: String): DocxResult {
         val file = File(filePath)
         if (!file.exists()) {
             throw IllegalArgumentException("Word 文件不存在: $filePath")
@@ -61,6 +66,7 @@ object DocxHtmlConverter {
 
             // 3. 构建 HTML
             val sb = StringBuilder()
+            val sentences = mutableListOf<String>()
             sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\">")
             sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">")
             sb.append("<style>")
@@ -79,7 +85,7 @@ object DocxHtmlConverter {
                 for (i in 0 until children.length) {
                     val child = children.item(i)
                     if (child.nodeType == Node.ELEMENT_NODE) {
-                        val blockHtml = elementToHtml(child as Element, mediaMap)
+                        val blockHtml = elementToHtml(child as Element, mediaMap, sentences)
                         if (blockHtml.isNotEmpty()) {
                             sb.append(blockHtml)
                             blockCount++
@@ -97,15 +103,20 @@ object DocxHtmlConverter {
             sb.append("""
                 (function() {
                     document.addEventListener('click', function(e) {
-                        var el = e.target.closest('p,td,li,h1,h2,h3,h4,h5,h6');
+                        var el = e.target.closest('[data-idx]');
+                        if (!el) {
+                            el = e.target.closest('p,td,li,h1,h2,h3,h4,h5,h6');
+                        }
                         if (!el) return;
                         var text = (el.innerText || el.textContent || '').trim();
                         if (!text) return;
+                        var idxAttr = el.getAttribute('data-idx');
+                        var idx = idxAttr ? parseInt(idxAttr, 10) : -1;
                         var prev = document.querySelector('.wm-hl');
                         if (prev) prev.classList.remove('wm-hl');
                         el.classList.add('wm-hl');
                         if (window.DocReadBridge && window.DocReadBridge.onSentenceClick) {
-                            window.DocReadBridge.onSentenceClick(text);
+                            window.DocReadBridge.onSentenceClick(text, idx);
                         } else {
                             console.log('DocReadBridge not found on window');
                         }
@@ -113,38 +124,45 @@ object DocxHtmlConverter {
                 })();
                 
                 function highlightIndex(index) {
-                    var items = document.querySelectorAll('p,td,li');
-                    if (index >= 0 && index < items.length) {
+                    var el = document.querySelector('[data-idx="' + index + '"]');
+                    if (el) {
                         var prev = document.querySelector('.wm-hl');
                         if (prev) prev.classList.remove('wm-hl');
-                        var target = items[index];
-                        target.classList.add('wm-hl');
-                        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        el.classList.add('wm-hl');
+                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     }
                 }
             """.trimIndent())
             sb.append("</script>")
             sb.append("</body></html>")
 
-            return sb.toString()
+            return DocxResult(sb.toString(), sentences)
         } finally {
             zip.close()
         }
     }
 
-    private fun elementToHtml(el: Element, mediaMap: Map<String, String>): String {
+    private fun elementToHtml(el: Element, mediaMap: Map<String, String>, sentences: MutableList<String>): String {
         return when (el.localName) {
-            "p" -> paragraphToHtml(el, mediaMap)
-            "tbl" -> tableToHtml(el, mediaMap)
+            "p" -> paragraphToHtml(el, mediaMap, sentences)
+            "tbl" -> tableToHtml(el, mediaMap, sentences)
             "sectPr" -> ""
             else -> {
                 val runs = runsToHtml(el, mediaMap)
-                if (runs.isNotEmpty()) "<p>$runs</p>" else ""
+                if (runs.isNotEmpty()) {
+                    val text = el.textContent?.trim() ?: ""
+                    val idxAttr = if (text.isNotBlank()) {
+                        val idx = sentences.size
+                        sentences.add(text)
+                        " data-idx=\"$idx\""
+                    } else ""
+                    "<p$idxAttr>$runs</p>"
+                } else ""
             }
         }
     }
 
-    private fun paragraphToHtml(p: Element, mediaMap: Map<String, String>): String {
+    private fun paragraphToHtml(p: Element, mediaMap: Map<String, String>, sentences: MutableList<String>): String {
         val style = StringBuilder()
         val pPr = getFirstChild(p, "pPr")
         if (pPr != null) {
@@ -152,11 +170,19 @@ object DocxHtmlConverter {
         }
         val runs = runsToHtml(p, mediaMap)
         if (runs.isEmpty()) return ""
+        val text = p.textContent?.trim() ?: ""
+        val idxAttr = if (text.isNotBlank()) {
+            val idx = sentences.size
+            sentences.add(text)
+            " data-idx=\"$idx\""
+        } else {
+            ""
+        }
         val styleAttr = if (style.isNotEmpty()) " style=\"${style.trim()}\"" else ""
-        return "<p$styleAttr>$runs</p>"
+        return "<p$idxAttr$styleAttr>$runs</p>"
     }
 
-    private fun tableToHtml(tbl: Element, mediaMap: Map<String, String>): String {
+    private fun tableToHtml(tbl: Element, mediaMap: Map<String, String>, sentences: MutableList<String>): String {
         val rows = StringBuilder()
         val children = tbl.childNodes
         for (i in 0 until children.length) {
@@ -172,7 +198,7 @@ object DocxHtmlConverter {
                         for (k in 0 until tcChildren.length) {
                             val p = tcChildren.item(k)
                             if (p.nodeType == Node.ELEMENT_NODE && p.localName == "p") {
-                                cellContent.append(paragraphToHtml(p as Element, mediaMap))
+                                cellContent.append(paragraphToHtml(p as Element, mediaMap, sentences))
                             }
                         }
                         cells.append("<td>$cellContent</td>")
@@ -183,6 +209,7 @@ object DocxHtmlConverter {
         }
         return "<table>$rows</table>"
     }
+
 
     private fun parseParaStyle(pPr: Element, out: StringBuilder) {
         val jc = getFirstChild(pPr, "jc")

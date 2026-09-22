@@ -4,6 +4,7 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import io.legado.app.R
 import io.legado.app.constant.AppLog
+import io.legado.app.help.config.AppConfig
 import io.legado.app.utils.buildMainHandler
 import io.legado.app.utils.splitNotBlank
 import io.legado.app.utils.toastOnUi
@@ -59,6 +60,8 @@ class TTS {
             onInit = true
             textToSpeech = TextToSpeech(appCtx, initListener)
         } else {
+            val rate = (AppConfig.speechRatePlay + 5) / 10f
+            textToSpeech?.setSpeechRate(rate)
             addTextToSpeakList()
         }
     }
@@ -105,6 +108,8 @@ class TTS {
         override fun onInit(status: Int) {
             if (status == TextToSpeech.SUCCESS) {
                 textToSpeech?.setOnUtteranceProgressListener(utteranceListener)
+                val rate = (AppConfig.speechRatePlay + 5) / 10f
+                textToSpeech?.setSpeechRate(rate)
                 addTextToSpeakList()
             } else {
                 appCtx.toastOnUi(R.string.tts_init_failed)
@@ -113,6 +118,7 @@ class TTS {
         }
 
     }
+
 
     /**
      * 朗读监听

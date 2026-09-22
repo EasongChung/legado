@@ -36,8 +36,14 @@ class DocxPageView @JvmOverloads constructor(
     private val webView: WebView = WebView(context)
     private val coroutineScope = CoroutineScope(Dispatchers.Main + Job())
 
-    var onSentenceClickListener: ((String) -> Unit)? = null
+    var onSentenceClickListener: ((String, Int) -> Unit)? = null
     var onCenterClickListener: (() -> Unit)? = null
+
+    private var sentences: List<String> = emptyList()
+    var currentSentenceIndex: Int = -1
+        private set
+
+    fun getSentences(): List<String> = sentences
 
     private var downX = 0f
     private var downY = 0f
@@ -70,9 +76,12 @@ class DocxPageView @JvmOverloads constructor(
             }
         }
 
-        webView.addJavascriptInterface(DocReadBridge { text ->
+        webView.addJavascriptInterface(DocReadBridge { text, index ->
             post {
-                onSentenceClickListener?.invoke(text)
+                if (index >= 0) {
+                    currentSentenceIndex = index
+                }
+                onSentenceClickListener?.invoke(text, index)
             }
         }, "DocReadBridge")
     }
@@ -111,9 +120,11 @@ class DocxPageView @JvmOverloads constructor(
     fun openFile(file: File) {
         coroutineScope.launch(Dispatchers.IO) {
             try {
-                val html = DocxHtmlConverter.convert(file.absolutePath)
+                val result = DocxHtmlConverter.convert(file.absolutePath)
+                sentences = result.sentences
+                currentSentenceIndex = -1
                 withContext(Dispatchers.Main) {
-                    webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+                    webView.loadDataWithBaseURL(null, result.html, "text/html", "UTF-8", null)
                 }
             } catch (t: Throwable) {
                 withContext(Dispatchers.Main) {
@@ -126,6 +137,7 @@ class DocxPageView @JvmOverloads constructor(
 
     /** 通知前端高亮指定索引的段落/句子，并平滑居中滚动 */
     fun highlightIndex(index: Int) {
+        currentSentenceIndex = index
         webView.evaluateJavascript("highlightIndex($index);", null)
     }
 
@@ -137,12 +149,18 @@ class DocxPageView @JvmOverloads constructor(
 }
 
 @Keep
-class DocReadBridge(private val onSentenceClick: (String) -> Unit) {
+class DocReadBridge(private val onSentenceClick: (String, Int) -> Unit) {
     @JavascriptInterface
     fun onSentenceClick(text: String?) {
+        onSentenceClick(text, -1)
+    }
+
+    @JavascriptInterface
+    fun onSentenceClick(text: String?, index: Int) {
         if (!text.isNullOrBlank()) {
-            onSentenceClick.invoke(text.trim())
+            onSentenceClick.invoke(text.trim(), index)
         }
     }
 }
+
 
