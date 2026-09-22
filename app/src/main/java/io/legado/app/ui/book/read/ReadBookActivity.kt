@@ -40,6 +40,7 @@ import io.legado.app.help.IntentData
 import io.legado.app.help.TTS
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
+import io.legado.app.help.book.getLocalUri
 import io.legado.app.help.book.isAudio
 import io.legado.app.help.book.isDocx
 import io.legado.app.help.book.isEpub
