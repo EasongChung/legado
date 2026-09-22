@@ -51,47 +51,73 @@ object AppConst {
     )
 
     @SuppressLint("PrivateResource")
-    val sysElevation = appCtx.resources
-        .getDimension(com.google.android.material.R.dimen.design_appbar_elevation)
-        .toInt()
+    val sysElevation: Int by lazy {
+        kotlin.runCatching {
+            appCtx.resources
+                .getDimension(com.google.android.material.R.dimen.design_appbar_elevation)
+                .toInt()
+        }.getOrDefault(0)
+    }
 
     val androidId: String by lazy {
-        Settings.System.getString(appCtx.contentResolver, Settings.Secure.ANDROID_ID) ?: "null"
+        kotlin.runCatching {
+            Settings.System.getString(appCtx.contentResolver, Settings.Secure.ANDROID_ID)
+        }.getOrNull() ?: "null"
     }
 
     val appInfo: AppInfo by lazy {
         val appInfo = AppInfo()
-        @Suppress("DEPRECATION")
-        appCtx.packageManager.getPackageInfo(appCtx.packageName, PackageManager.GET_ACTIVITIES)
-            ?.let {
-                appInfo.versionName = it.versionName!!
-                appInfo.appVariant = when {
-                    it.packageName.contains("releaseA") -> AppVariant.BETA_RELEASEA
-                    isBeta -> AppVariant.BETA_RELEASE
-                    isOfficial -> AppVariant.OFFICIAL
-                    else -> AppVariant.UNKNOWN
-                }
+        kotlin.runCatching {
+            @Suppress("DEPRECATION")
+            appCtx.packageManager.getPackageInfo(appCtx.packageName, PackageManager.GET_ACTIVITIES)
+                ?.let {
+                    appInfo.versionName = it.versionName ?: ""
+                    appInfo.appVariant = when {
+                        it.packageName.contains("releaseA") -> AppVariant.BETA_RELEASEA
+                        isBeta -> AppVariant.BETA_RELEASE
+                        isOfficial -> AppVariant.OFFICIAL
+                        else -> AppVariant.UNKNOWN
+                    }
 
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                    appInfo.versionCode = it.longVersionCode
-                } else {
-                    @Suppress("DEPRECATION")
-                    appInfo.versionCode = it.versionCode.toLong()
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                        appInfo.versionCode = it.longVersionCode
+                    } else {
+                        @Suppress("DEPRECATION")
+                        appInfo.versionCode = it.versionCode.toLong()
+                    }
                 }
-            }
+        }
         appInfo
     }
 
     @Suppress("DEPRECATION")
     private val sha256Signature: String by lazy {
-        val packageInfo =
-            appCtx.packageManager.getPackageInfo(appCtx.packageName, PackageManager.GET_SIGNATURES)
-        DigestUtil.sha256Hex(packageInfo.signatures!![0].toByteArray()).uppercase()
+        kotlin.runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                val packageInfo = appCtx.packageManager.getPackageInfo(
+                    appCtx.packageName,
+                    PackageManager.GET_SIGNING_CERTIFICATES
+                )
+                val signers = packageInfo.signingInfo?.apkContentsSigners
+                    ?: packageInfo.signingInfo?.signingCertificateHistory
+                signers?.firstOrNull()?.let {
+                    DigestUtil.sha256Hex(it.toByteArray()).uppercase()
+                }
+            } else {
+                val packageInfo = appCtx.packageManager.getPackageInfo(
+                    appCtx.packageName,
+                    PackageManager.GET_SIGNATURES
+                )
+                packageInfo.signatures?.firstOrNull()?.let {
+                    DigestUtil.sha256Hex(it.toByteArray()).uppercase()
+                }
+            }
+        }.getOrNull() ?: ""
     }
 
-    private val isOfficial = sha256Signature == OFFICIAL_SIGNATURE
+    private val isOfficial by lazy { sha256Signature == OFFICIAL_SIGNATURE }
 
-    private val isBeta = sha256Signature == BETA_SIGNATURE || BuildConfig.DEBUG
+    private val isBeta by lazy { sha256Signature == BETA_SIGNATURE || BuildConfig.DEBUG }
 
     val charsets =
         arrayListOf("UTF-8", "GB2312", "GB18030", "GBK", "Unicode", "UTF-16", "UTF-16LE", "ASCII")

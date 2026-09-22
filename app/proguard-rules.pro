@@ -147,3 +147,7 @@ cn.hutool.core.util.**{*;}
 -keep class com.tom_roush.pdfbox.** { *; }
 -keep class com.github.barteksc.pdfviewer.** { *; }
 -keep class com.shockwave.pdfium.** { *; }
+
+## AppConst 常量单例保护
+-keep class io.legado.app.constant.AppConst { *; }
+
