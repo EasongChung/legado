@@ -1,8 +1,10 @@
 package io.legado.app.ui.book.read
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import io.legado.app.utils.statusBarHeight
 import android.os.Bundle
 import android.os.Looper
 import android.view.Gravity
@@ -1157,7 +1159,7 @@ class ReadBookActivity : BaseReadBookActivity(),
             postEvent(EventBus.READ_ALOUD_DS, 0)
             if (isDocReadingAloud) {
                 stopDocumentReadAloud()
-                toastOnUi(R.string.timer_stop_aloud)
+                toastOnUi("定时结束，已停止朗读")
             }
         }
     }
