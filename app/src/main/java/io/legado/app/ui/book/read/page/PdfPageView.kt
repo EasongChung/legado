@@ -108,16 +108,12 @@ class PdfPageView @JvmOverloads constructor(
         if (pageSentencesCache.containsKey(page)) return
 
         coroutineScope.launch(Dispatchers.IO) {
-            val chars = PdfDocumentHelper.extractChars(file, page)
-            val sentences = TextPositionService.buildSentences(chars, page)
+            val pageData = PdfDocumentHelper.extractPageData(file, page)
+            val sentences = TextPositionService.buildSentences(pageData.chars, page)
             withContext(Dispatchers.Main) {
                 pageSentencesCache[page] = sentences
-                if (chars.isNotEmpty()) {
-                    val w = chars.maxOfOrNull { it.x + it.w } ?: 0f
-                    val h = chars.maxOfOrNull { it.y + it.h } ?: 0f
-                    if (w > 0 && h > 0) {
-                        pagePointSizes[page] = SizeF(w, h)
-                    }
+                if (pageData.pageSize != null && pageData.pageSize.width > 0f && pageData.pageSize.height > 0f) {
+                    pagePointSizes[page] = pageData.pageSize
                 }
             }
         }

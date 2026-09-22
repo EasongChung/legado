@@ -2,6 +2,7 @@ package io.legado.app.model.document.pdf
 
 import android.content.Context
 import android.util.Log
+import com.shockwave.pdfium.util.SizeF
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -14,6 +15,11 @@ import java.io.InputStream
 object PdfDocumentHelper {
     private const val TAG = "PdfDocumentHelper"
     private var isInitialized = false
+
+    data class PageData(
+        val chars: List<CharBox>,
+        val pageSize: SizeF?
+    )
 
     @Synchronized
     fun init(context: Context) {
@@ -29,18 +35,27 @@ object PdfDocumentHelper {
 
     /** 提取指定页的字符列表（页码 pageIndex 从 0 开始） */
     fun extractChars(file: File, pageIndex: Int): List<CharBox> {
-        if (!file.exists()) return emptyList()
+        return extractPageData(file, pageIndex).chars
+    }
+
+    /** 提取指定页的字符列表与页面真实的物理点尺寸（CropBox） */
+    fun extractPageData(file: File, pageIndex: Int): PageData {
+        if (!file.exists()) return PageData(emptyList(), null)
         val doc = PDDocument.load(file)
         try {
-            if (pageIndex < 0 || pageIndex >= doc.numberOfPages) return emptyList()
+            if (pageIndex < 0 || pageIndex >= doc.numberOfPages) return PageData(emptyList(), null)
+            val page = doc.getPage(pageIndex)
+            val cropBox = page.cropBox ?: page.mediaBox
+            val size = if (cropBox != null) SizeF(cropBox.width, cropBox.height) else null
+
             val stripper = CharBoxStripper()
             stripper.startPage = pageIndex + 1
             stripper.endPage = pageIndex + 1
             stripper.getText(doc)
-            return stripper.boxes
+            return PageData(stripper.boxes, size)
         } catch (t: Throwable) {
-            Log.e(TAG, "提取第 $pageIndex 页字符失败", t)
-            return emptyList()
+            Log.e(TAG, "提取第 $pageIndex 页数据失败", t)
+            return PageData(emptyList(), null)
         } finally {
             doc.close()
         }

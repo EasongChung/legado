@@ -2,12 +2,17 @@ package io.legado.app.ui.book.read.page
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Color
 import android.util.AttributeSet
 import android.view.MotionEvent
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.FrameLayout
+import androidx.annotation.Keep
+import io.legado.app.constant.AppLog
 import io.legado.app.model.document.docx.DocxHtmlConverter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,16 +60,19 @@ class DocxPageView @JvmOverloads constructor(
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
 
-        webView.setBackgroundColor(0) // 透明背景，继承 Legado 阅读主题底色
+        // 实色背景，彻底避免 Chromium GPU 合成器在硬件加速下透明图层滚动花屏与残影
+        webView.setBackgroundColor(Color.WHITE)
 
-        webView.addJavascriptInterface(object {
-            @JavascriptInterface
-            fun onSentenceClick(text: String) {
-                post {
-                    if (text.isNotBlank()) {
-                        onSentenceClickListener?.invoke(text.trim())
-                    }
-                }
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                AppLog.put("DocxWebView: ${consoleMessage?.message()}")
+                return super.onConsoleMessage(consoleMessage)
+            }
+        }
+
+        webView.addJavascriptInterface(DocReadBridge { text ->
+            post {
+                onSentenceClickListener?.invoke(text)
             }
         }, "DocReadBridge")
     }
@@ -127,3 +135,14 @@ class DocxPageView @JvmOverloads constructor(
         webView.destroy()
     }
 }
+
+@Keep
+class DocReadBridge(private val onSentenceClick: (String) -> Unit) {
+    @JavascriptInterface
+    fun onSentenceClick(text: String?) {
+        if (!text.isNullOrBlank()) {
+            onSentenceClick.invoke(text.trim())
+        }
+    }
+}
+

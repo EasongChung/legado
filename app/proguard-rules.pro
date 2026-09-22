@@ -151,3 +151,11 @@ cn.hutool.core.util.**{*;}
 ## AppConst 常量单例保护
 -keep class io.legado.app.constant.AppConst { *; }
 
+## JavascriptInterface 点读防混淆保护
+-keepattributes JavascriptInterface
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class io.legado.app.ui.book.read.page.DocReadBridge { *; }
+
+

@@ -64,7 +64,7 @@ object DocxHtmlConverter {
             sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\">")
             sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">")
             sb.append("<style>")
-            sb.append("body { font-family: -apple-system, sans-serif; margin: 16px; font-size: 17px; line-height: 1.8; color: #2C3E50; background: transparent; word-break: break-word; }")
+            sb.append("body { font-family: -apple-system, sans-serif; margin: 16px; font-size: 17px; line-height: 1.8; color: #2C3E50; background: #FFFFFF; word-break: break-word; -webkit-tap-highlight-color: transparent; }")
             sb.append("table { border-collapse: collapse; width: 100%; margin: 8px 0; }")
             sb.append("td, th { border: 1px solid #BDC3C7; padding: 6px 10px; vertical-align: top; }")
             sb.append("img { max-width: 100%; height: auto; display: block; margin: 8px auto; border-radius: 4px; }")
@@ -97,17 +97,19 @@ object DocxHtmlConverter {
             sb.append("""
                 (function() {
                     document.addEventListener('click', function(e) {
-                        var el = e.target.closest('p,td,li');
+                        var el = e.target.closest('p,td,li,h1,h2,h3,h4,h5,h6');
                         if (!el) return;
-                        var text = (el.innerText || '').trim();
+                        var text = (el.innerText || el.textContent || '').trim();
                         if (!text) return;
                         var prev = document.querySelector('.wm-hl');
                         if (prev) prev.classList.remove('wm-hl');
                         el.classList.add('wm-hl');
                         if (window.DocReadBridge && window.DocReadBridge.onSentenceClick) {
                             window.DocReadBridge.onSentenceClick(text);
+                        } else {
+                            console.log('DocReadBridge not found on window');
                         }
-                    });
+                    }, true);
                 })();
                 
                 function highlightIndex(index) {
