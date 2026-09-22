@@ -66,6 +66,10 @@ class TTS {
         }
     }
 
+    fun setSpeechRate(rate: Float) {
+        textToSpeech?.setSpeechRate(rate)
+    }
+
     fun stop() {
         textToSpeech?.stop()
     }

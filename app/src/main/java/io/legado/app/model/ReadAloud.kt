@@ -128,6 +128,8 @@ object ReadAloud {
             val intent = Intent(context, aloudClass)
             intent.action = IntentAction.upTtsSpeechRate
             context.startForegroundServiceCompat(intent)
+        } else {
+            postEvent(EventBus.DOC_TTS_SPEED, true)
         }
     }
 
@@ -137,7 +139,9 @@ object ReadAloud {
             intent.action = IntentAction.setTimer
             intent.putExtra("minute", minute)
             context.startForegroundServiceCompat(intent)
+        } else {
+            postEvent(EventBus.DOC_SET_TIMER, minute)
         }
     }
 
-}
+}

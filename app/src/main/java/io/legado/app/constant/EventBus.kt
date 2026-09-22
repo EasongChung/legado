@@ -36,4 +36,7 @@ object EventBus {
     const val PLAY_MODE_CHANGED = "playModeChanged"
     const val DOC_READ_PREV = "docReadPrev"
     const val DOC_READ_NEXT = "docReadNext"
+    const val DOC_TTS_SPEED = "docTtsSpeed"
+    const val DOC_SET_TIMER = "docSetTimer"
 }
+

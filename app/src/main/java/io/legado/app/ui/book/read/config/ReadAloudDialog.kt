@@ -88,8 +88,10 @@ class ReadAloudDialog : BaseDialogFragment(R.layout.dialog_read_aloud) {
     private fun initData() = binding.run {
         upPlayState()
         upTimerText(BaseReadAloudService.timeMinute)
-        cbTtsFollowSys.isChecked = requireContext().getPrefBoolean("ttsFollowSys", true)
-        upTtsSpeechRateEnabled(!cbTtsFollowSys.isChecked)
+        val isDoc = (activity as? ReadBookActivity)?.let { it.isDocReadingAloud || ReadBook.book?.isPdf == true || ReadBook.book?.isDocx == true } ?: false
+        val followSys = if (isDoc) false else requireContext().getPrefBoolean("ttsFollowSys", true)
+        cbTtsFollowSys.isChecked = followSys
+        upTtsSpeechRateEnabled(!followSys)
         upSeekTimer()
     }
 
@@ -111,18 +113,35 @@ class ReadAloudDialog : BaseDialogFragment(R.layout.dialog_read_aloud) {
         ivPlayPrev.setOnClickListener { ReadAloud.prevParagraph(requireContext()) }
         ivPlayNext.setOnClickListener { ReadAloud.nextParagraph(requireContext()) }
         llCatalog.setOnClickListener { callBack?.openChapterList() }
-        llToBackstage.setOnClickListener { callBack?.finish() }
+        llToBackstage.setOnClickListener {
+            if ((activity as? ReadBookActivity)?.isDocReadingAloud == true) {
+                activity?.moveTaskToBack(true)
+                dismissAllowingStateLoss()
+            } else {
+                callBack?.finish()
+            }
+        }
         cbTtsFollowSys.setOnCheckedChangeListener { _, isChecked ->
             AppConfig.ttsFlowSys = isChecked
             upTtsSpeechRateEnabled(!isChecked)
             upTtsSpeechRate()
         }
         ivTtsSpeechReduce.setOnClickListener {
+            if (cbTtsFollowSys.isChecked) {
+                cbTtsFollowSys.isChecked = false
+                AppConfig.ttsFlowSys = false
+                upTtsSpeechRateEnabled(true)
+            }
             seekTtsSpeechRate.progress = AppConfig.ttsSpeechRate - 1
             AppConfig.ttsSpeechRate -= 1
             upTtsSpeechRate()
         }
         ivTtsSpeechAdd.setOnClickListener {
+            if (cbTtsFollowSys.isChecked) {
+                cbTtsFollowSys.isChecked = false
+                AppConfig.ttsFlowSys = false
+                upTtsSpeechRateEnabled(true)
+            }
             seekTtsSpeechRate.progress = AppConfig.ttsSpeechRate + 1
             AppConfig.ttsSpeechRate += 1
             upTtsSpeechRate()
@@ -148,6 +167,11 @@ class ReadAloudDialog : BaseDialogFragment(R.layout.dialog_read_aloud) {
             }
 
             override fun onStopTrackingTouch(seekBar: SeekBar) {
+                if (cbTtsFollowSys.isChecked) {
+                    cbTtsFollowSys.isChecked = false
+                    AppConfig.ttsFlowSys = false
+                    upTtsSpeechRateEnabled(true)
+                }
                 AppConfig.ttsSpeechRate = seekBar.progress
                 upTtsSpeechRate()
             }

@@ -258,4 +258,13 @@ class PdfPageView @JvmOverloads constructor(
             pdfView.jumpTo(currentPage - 1, true)
         }
     }
+
+    /** 跳转到指定页（0-indexed） */
+    fun jumpTo(page: Int) {
+        if (page in 0 until pdfView.pageCount) {
+            currentPage = page
+            pdfView.jumpTo(page, true)
+        }
+    }
 }
+

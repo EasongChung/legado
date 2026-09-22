@@ -165,6 +165,19 @@ class ReadBookActivity : BaseReadBookActivity(),
     private val tocActivity =
         registerForActivityResult(TocActivityResult()) {
             it?.let {
+                val book = ReadBook.book
+                if (book != null && book.isPdf) {
+                    ReadBook.durChapterIndex = it.first
+                    pdfPageView?.jumpTo(it.first)
+                    upSeekBarProgress()
+                    return@registerForActivityResult
+                }
+                if (book != null && book.isDocx) {
+                    ReadBook.durChapterIndex = it.first
+                    docxPageView?.highlightIndex(it.first)
+                    upSeekBarProgress()
+                    return@registerForActivityResult
+                }
                 viewModel.openChapter(it.first, it.second)
             }
         }
@@ -224,6 +237,9 @@ class ReadBookActivity : BaseReadBookActivity(),
     private var docxPageView: DocxPageView? = null
     internal var isDocReadingAloud = false
     private var docSentenceIndex = 0
+    private var docWakeLock: android.os.PowerManager.WakeLock? = null
+    private var docTimerJob: Job? = null
+    private var docTimerMinute: Int = 0
     val textActionMenu: TextActionMenu by lazy {
         TextActionMenu(this, this)
     }
@@ -1057,6 +1073,7 @@ class ReadBookActivity : BaseReadBookActivity(),
 
         binding.readView.visibility = View.GONE
         binding.documentContainer.visibility = View.VISIBLE
+        binding.documentContainer.setPadding(0, statusBarHeight, 0, 0)
 
         val file = try {
             BookHelp.getLocalOrCachedFile(book)
@@ -1113,11 +1130,60 @@ class ReadBookActivity : BaseReadBookActivity(),
         }
     }
 
+    private fun acquireDocWakeLock() {
+        if (docWakeLock == null) {
+            val pm = getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            docWakeLock = pm?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "legado:doc_aloud_wakelock")
+        }
+        if (docWakeLock?.isHeld == false) {
+            docWakeLock?.acquire(2 * 60 * 60 * 1000L)
+        }
+    }
+
+    private fun releaseDocWakeLock() {
+        if (docWakeLock?.isHeld == true) {
+            docWakeLock?.release()
+        }
+    }
+
+    private fun startDocTimer() {
+        docTimerJob?.cancel()
+        docTimerJob = lifecycleScope.launch {
+            while (docTimerMinute > 0 && isDocReadingAloud) {
+                postEvent(EventBus.READ_ALOUD_DS, docTimerMinute)
+                delay(60_000L)
+                docTimerMinute--
+            }
+            postEvent(EventBus.READ_ALOUD_DS, 0)
+            if (isDocReadingAloud) {
+                stopDocumentReadAloud()
+                toastOnUi(R.string.timer_stop_aloud)
+            }
+        }
+    }
+
+    private fun stopDocTimer() {
+        docTimerJob?.cancel()
+        docTimerJob = null
+        docTimerMinute = 0
+        postEvent(EventBus.READ_ALOUD_DS, 0)
+    }
+
+    private fun stopDocumentReadAloud() {
+        isDocReadingAloud = false
+        tts?.stop()
+        releaseDocWakeLock()
+        stopDocTimer()
+        postEvent(EventBus.ALOUD_STATE, Status.STOP)
+    }
+
     private fun speakDocumentSentence(text: String) {
         if (text.isBlank()) return
         if (tts == null) {
             tts = TTS()
         }
+        val rate = (AppConfig.speechRatePlay + 5) / 10f
+        tts?.setSpeechRate(rate)
         tts?.speak(text)
     }
 
@@ -1134,8 +1200,13 @@ class ReadBookActivity : BaseReadBookActivity(),
                 docSentenceIndex = 0
             }
             isDocReadingAloud = true
+            acquireDocWakeLock()
             postEvent(EventBus.ALOUD_STATE, Status.PLAY)
             showReadAloudDialog()
+            if (AppConfig.ttsTimer > 0) {
+                docTimerMinute = AppConfig.ttsTimer
+                startDocTimer()
+            }
             readNextPdfSentence()
         } else if (book.isDocx) {
             val docx = docxPageView ?: return
@@ -1148,8 +1219,13 @@ class ReadBookActivity : BaseReadBookActivity(),
                 docSentenceIndex = if (docx.currentSentenceIndex in sentences.indices) docx.currentSentenceIndex else 0
             }
             isDocReadingAloud = true
+            acquireDocWakeLock()
             postEvent(EventBus.ALOUD_STATE, Status.PLAY)
             showReadAloudDialog()
+            if (AppConfig.ttsTimer > 0) {
+                docTimerMinute = AppConfig.ttsTimer
+                startDocTimer()
+            }
             readNextDocxSentence()
         }
     }
@@ -1191,8 +1267,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 }
             }
         } else {
-            isDocReadingAloud = false
-            postEvent(EventBus.ALOUD_STATE, Status.STOP)
+            stopDocumentReadAloud()
             toastOnUi("文档朗读完毕")
         }
     }
@@ -1201,6 +1276,8 @@ class ReadBookActivity : BaseReadBookActivity(),
         if (tts == null) {
             tts = TTS()
         }
+        val rate = (AppConfig.speechRatePlay + 5) / 10f
+        tts?.setSpeechRate(rate)
         tts?.setSpeakStateListener(object : io.legado.app.help.TTS.SpeakStateListener {
             override fun onStart() {}
 
@@ -1857,6 +1934,8 @@ class ReadBookActivity : BaseReadBookActivity(),
     override fun onDestroy() {
         super.onDestroy()
         isDocReadingAloud = false
+        releaseDocWakeLock()
+        stopDocTimer()
         pdfPageView?.clearHighlights()
         docxPageView?.destroy()
         tts?.clearTts()
@@ -1903,8 +1982,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         observeEvent<Int>(EventBus.ALOUD_STATE) {
             if (it == Status.STOP || it == Status.PAUSE) {
                 if (isDocReadingAloud && it == Status.STOP) {
-                    isDocReadingAloud = false
-                    tts?.stop()
+                    stopDocumentReadAloud()
                 }
                 ReadBook.curTextChapter?.let { textChapter ->
                     val page = textChapter.getPageByReadPos(ReadBook.durChapterPos)
@@ -1923,6 +2001,20 @@ class ReadBookActivity : BaseReadBookActivity(),
         observeEvent<Boolean>(EventBus.DOC_READ_NEXT) {
             if (isDocReadingAloud) {
                 readNextDocSentence()
+            }
+        }
+        observeEvent<Boolean>(EventBus.DOC_TTS_SPEED) {
+            if (isDocReadingAloud) {
+                val rate = (AppConfig.speechRatePlay + 5) / 10f
+                tts?.setSpeechRate(rate)
+            }
+        }
+        observeEvent<Int>(EventBus.DOC_SET_TIMER) { minute ->
+            docTimerMinute = minute
+            if (minute > 0) {
+                startDocTimer()
+            } else {
+                stopDocTimer()
             }
         }
 
