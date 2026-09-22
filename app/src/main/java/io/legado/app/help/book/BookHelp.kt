@@ -306,6 +306,30 @@ object BookHelp {
     }
 
     /**
+     * 获取本地文件或缓存到沙盒的文件（支持 content:// 与绝对路径）
+     */
+    @Throws(IOException::class)
+    fun getLocalOrCachedFile(book: Book): File {
+        val uri = book.getLocalUri()
+        if (uri.isContentScheme()) {
+            val cacheFolder = FileUtils.createFolderIfNotExist(downloadDir, "cache_doc")
+            val fileName = "${book.name}_${book.originName}"
+            val file = File(cacheFolder, fileName)
+            val doc = DocumentFile.fromSingleUri(appCtx, uri)
+            val lastModified = doc?.lastModified() ?: 0L
+            if (!file.exists() || lastModified > book.latestChapterTime) {
+                io.legado.app.model.localBook.LocalBook.getBookInputStream(book).use { inputStream ->
+                    FileOutputStream(file).use { outputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                }
+            }
+            return file
+        }
+        return File(uri.path ?: "")
+    }
+
+    /**
      * 获取本地书籍文件的ParcelFileDescriptor
      *
      * @param book

@@ -1058,13 +1058,12 @@ class ReadBookActivity : BaseReadBookActivity(),
         binding.readView.visibility = View.GONE
         binding.documentContainer.visibility = View.VISIBLE
 
-        val uri = book.getLocalUri()
-        val path = if (uri.isContentScheme()) {
-            io.legado.app.model.localBook.LocalBook.getBookPath(book)
-        } else {
-            uri.path ?: ""
+        val file = try {
+            BookHelp.getLocalOrCachedFile(book)
+        } catch (e: Exception) {
+            AppLog.e("ReadBookActivity", "获取文档文件失败", e)
+            return
         }
-        val file = File(path)
         if (!file.exists()) {
             return
         }
