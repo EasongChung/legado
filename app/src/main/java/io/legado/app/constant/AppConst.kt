@@ -11,7 +11,7 @@ import org.apache.commons.lang3.time.FastDateFormat
 import splitties.init.appCtx
 
 @Suppress("ConstPropertyName")
-@SuppressLint("SimpleDateFormat")
+@SuppressLint("SimpleDateFormat", "PrivateResource")
 object AppConst {
 
     const val APP_TAG = "Legado"
@@ -50,7 +50,6 @@ object AppConst {
         "androidx.appcompat.view.menu.ListMenuItemView"
     )
 
-    @SuppressLint("PrivateResource")
     val sysElevation: Int by lazy {
         kotlin.runCatching {
             appCtx.resources
