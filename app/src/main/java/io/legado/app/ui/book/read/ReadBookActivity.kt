@@ -1061,7 +1061,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         val file = try {
             BookHelp.getLocalOrCachedFile(book)
         } catch (e: Exception) {
-            AppLog.e("ReadBookActivity", "获取文档文件失败", e)
+            AppLog.put("获取文档文件失败", e)
             return
         }
         if (!file.exists()) {
