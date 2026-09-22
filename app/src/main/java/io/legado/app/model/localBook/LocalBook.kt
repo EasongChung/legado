@@ -26,6 +26,7 @@ import io.legado.app.help.book.getArchiveUri
 import io.legado.app.help.book.getLocalUri
 import io.legado.app.help.book.getRemoteUrl
 import io.legado.app.help.book.isArchive
+import io.legado.app.help.book.isDocx
 import io.legado.app.help.book.isEpub
 import io.legado.app.help.book.isMobi
 import io.legado.app.help.book.isPdf
@@ -130,6 +131,10 @@ object LocalBook {
                 PdfFile.getChapterList(book)
             }
 
+            book.isDocx -> {
+                DocxFile.getChapterList(book)
+            }
+
             book.isMobi -> {
                 MobiFile.getChapterList(book)
             }
@@ -172,6 +177,10 @@ object LocalBook {
 
                 book.isPdf -> {
                     PdfFile.getContent(book, chapter)
+                }
+
+                book.isDocx -> {
+                    DocxFile.getContent(book, chapter)
                 }
 
                 book.isMobi -> {
@@ -266,6 +275,7 @@ object LocalBook {
             book.isEpub -> EpubFile.upBookInfo(book)
             book.isUmd -> UmdFile.upBookInfo(book)
             book.isPdf -> PdfFile.upBookInfo(book)
+            book.isDocx -> DocxFile.upBookInfo(book)
             book.isMobi -> MobiFile.upBookInfo(book)
         }
     }

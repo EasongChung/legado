@@ -28,6 +28,8 @@ quickChineseTransfer = "0.2.16"
 
 splitties = "3.0.0"
 desugar = "2.1.5"
+pdfbox = "2.0.27.0"
+androidPdfViewer = "3.2.0-beta05"
 
 #kotlinxSerialization = "1.8.0"
 swiperefreshlayout = "1.2.0"
@@ -185,6 +187,8 @@ mozilla-rhino = { module = "org.mozilla:rhino", version.ref = "rhino" }
 
 renderscript-intrinsics-replacement-toolkit = { module = "com.github.TomasValenta:renderscript-intrinsics-replacement-toolkit", version = "8eaa829ddd" }
 zxing-lite = { module = "com.github.jenly1314:zxing-lite", version.ref = "zxingLite" }
+pdfbox-android = { module = "com.tom-roush:pdfbox-android", version.ref = "pdfbox" }
+android-pdf-viewer = { module = "io.github.oothp:android-pdf-viewer", version.ref = "androidPdfViewer" }
 
 [bundles]
 coroutines = ["kotlinx-coroutines-core", "kotlinx-coroutines-android"]

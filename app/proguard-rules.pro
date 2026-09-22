@@ -140,3 +140,10 @@ cn.hutool.core.util.**{*;}
 # Throwable
 -keepnames class * extends java.lang.Throwable
 -keepclassmembernames,allowobfuscation class * extends java.lang.Throwable{*;}
+
+## PDFBox & AndroidPdfViewer
+-dontwarn com.gemalto.jp2.**
+-dontwarn com.tom_roush.pdfbox.**
+-keep class com.tom_roush.pdfbox.** { *; }
+-keep class com.github.barteksc.pdfviewer.** { *; }
+-keep class com.shockwave.pdfium.** { *; }

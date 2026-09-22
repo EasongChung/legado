@@ -62,6 +62,9 @@ val Book.isUmd: Boolean
 val Book.isPdf: Boolean
     get() = isLocal && originName.endsWith(".pdf", true)
 
+val Book.isDocx: Boolean
+    get() = isLocal && (originName.endsWith(".docx", true) || originName.endsWith(".doc", true))
+
 val Book.isMobi: Boolean
     get() = isLocal && (originName.endsWith(".mobi", true) ||
             originName.endsWith(".azw3", true) ||

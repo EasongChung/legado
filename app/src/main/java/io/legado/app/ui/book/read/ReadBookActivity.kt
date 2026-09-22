@@ -41,11 +41,17 @@ import io.legado.app.help.TTS
 import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.ContentProcessor
 import io.legado.app.help.book.isAudio
+import io.legado.app.help.book.isDocx
 import io.legado.app.help.book.isEpub
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalTxt
 import io.legado.app.help.book.isMobi
+import io.legado.app.help.book.isPdf
 import io.legado.app.help.book.removeType
+import io.legado.app.ui.book.read.page.PdfPageView
+import io.legado.app.ui.book.read.page.DocxPageView
+import io.legado.app.model.document.pdf.SentenceBox
+import java.io.File
 import io.legado.app.help.book.update
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.ReadBookConfig
@@ -213,6 +219,10 @@ class ReadBookActivity : BaseReadBookActivity(),
     private var menu: Menu? = null
     private var backupJob: Job? = null
     private var tts: TTS? = null
+    private var pdfPageView: PdfPageView? = null
+    private var docxPageView: DocxPageView? = null
+    private var isDocReadingAloud = false
+    private var docSentenceIndex = 0
     val textActionMenu: TextActionMenu by lazy {
         TextActionMenu(this, this)
     }
@@ -995,6 +1005,7 @@ class ReadBookActivity : BaseReadBookActivity(),
             ReadBook.readAloud()
         }
         loadStates = true
+        checkAndSetupDocumentView()
     }
 
     /**
@@ -1011,6 +1022,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 upSeekBarProgress()
             }
             loadStates = false
+            checkAndSetupDocumentView()
             success?.invoke()
         }
     }
@@ -1025,6 +1037,134 @@ class ReadBookActivity : BaseReadBookActivity(),
             upSeekBarProgress()
         }
         loadStates = false
+        checkAndSetupDocumentView()
+    }
+
+    /**
+     * 检测并设置本地文档原文排版与点读模式（PDF / Word）
+     */
+    private fun checkAndSetupDocumentView() {
+        val book = ReadBook.book ?: return
+        val isPdf = book.isPdf
+        val isDocx = book.isDocx
+
+        if (!isPdf && !isDocx) {
+            binding.documentContainer.visibility = View.GONE
+            binding.readView.visibility = View.VISIBLE
+            return
+        }
+
+        binding.readView.visibility = View.GONE
+        binding.documentContainer.visibility = View.VISIBLE
+
+        val uri = book.getLocalUri()
+        val path = if (uri.isContentScheme()) {
+            io.legado.app.model.localBook.LocalBook.getBookPath(book)
+        } else {
+            uri.path ?: ""
+        }
+        val file = File(path)
+        if (!file.exists()) {
+            return
+        }
+
+        if (isPdf) {
+            docxPageView?.visibility = View.GONE
+            if (pdfPageView == null) {
+                pdfPageView = PdfPageView(this).apply {
+                    onCenterClickListener = { showActionMenu() }
+                    onSentenceClickListener = { sentence, index ->
+                        docSentenceIndex = index
+                        speakDocumentSentence(sentence.text)
+                    }
+                    onPageChangedListener = { page, total ->
+                        ReadBook.durChapterIndex = page
+                        upSeekBarProgress()
+                    }
+                }
+                binding.documentContainer.addView(
+                    pdfPageView,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            }
+            pdfPageView?.visibility = View.VISIBLE
+            pdfPageView?.openFile(file, ReadBook.durChapterIndex)
+        } else if (isDocx) {
+            pdfPageView?.visibility = View.GONE
+            if (docxPageView == null) {
+                docxPageView = DocxPageView(this).apply {
+                    onCenterClickListener = { showActionMenu() }
+                    onSentenceClickListener = { text ->
+                        speakDocumentSentence(text)
+                    }
+                }
+                binding.documentContainer.addView(
+                    docxPageView,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            }
+            docxPageView?.visibility = View.VISIBLE
+            docxPageView?.openFile(file)
+        }
+    }
+
+    private fun speakDocumentSentence(text: String) {
+        if (text.isBlank()) return
+        if (tts == null) {
+            tts = TTS()
+        }
+        tts?.speak(text)
+    }
+
+    private fun startDocumentReadAloud() {
+        val pdf = pdfPageView
+        if (pdf != null && ReadBook.book?.isPdf == true) {
+            isDocReadingAloud = true
+            val sentences = pdf.getCurrentPageSentences()
+            if (sentences.isEmpty()) {
+                toastOnUi("当前页面未提取到朗读文本")
+                return
+            }
+            if (docSentenceIndex !in sentences.indices) {
+                docSentenceIndex = 0
+            }
+            readNextPdfSentence()
+        } else {
+            toastOnUi("开始朗读文档")
+        }
+    }
+
+    private fun readNextPdfSentence() {
+        val pdf = pdfPageView ?: return
+        if (!isDocReadingAloud) return
+        val sentences = pdf.getCurrentPageSentences()
+        if (docSentenceIndex < sentences.size) {
+            val sentence = sentences[docSentenceIndex]
+            pdf.highlightSentenceIndex(docSentenceIndex)
+            if (tts == null) {
+                tts = TTS()
+            }
+            tts?.setSpeakStateListener(object : io.legado.app.help.TTS.SpeakStateListener {
+                override fun onStart() {}
+
+                override fun onDone() {
+                    docSentenceIndex++
+                    runOnUiThread {
+                        readNextPdfSentence()
+                    }
+                }
+            })
+            tts?.speak(sentence.text)
+        } else {
+            // 当前页读完，翻页并继续下一页
+            docSentenceIndex = 0
+            pdf.nextPage()
+            handler.postDelayed({
+                readNextPdfSentence()
+            }, 600)
+        }
     }
 
     override fun upPageAnim(upRecorder: Boolean) {
@@ -1325,6 +1465,17 @@ class ReadBookActivity : BaseReadBookActivity(),
      */
     override fun onClickReadAloud() {
         autoPageStop()
+        val book = ReadBook.book
+        if (book?.isPdf == true || book?.isDocx == true) {
+            if (isDocReadingAloud) {
+                isDocReadingAloud = false
+                tts?.stop()
+                toastOnUi("已暂停朗读")
+            } else {
+                startDocumentReadAloud()
+            }
+            return
+        }
         when {
             !BaseReadAloudService.isRun -> {
                 ReadAloud.upReadAloudClass()
@@ -1614,6 +1765,9 @@ class ReadBookActivity : BaseReadBookActivity(),
 
     override fun onDestroy() {
         super.onDestroy()
+        isDocReadingAloud = false
+        pdfPageView?.clearHighlights()
+        docxPageView?.destroy()
         tts?.clearTts()
         textActionMenu.dismiss()
         popupAction.dismiss()

@@ -289,4 +289,8 @@ dependencies {
 
     //com.github.AmrDeveloper:CodeView代码编辑已集成到应用内
     //epubLib集成到应用内
+
+    // [Phase 3] PDF 原文渲染与字符坐标提取
+    implementation(libs.pdfbox.android)
+    implementation(libs.android.pdf.viewer)
 }
