@@ -15,6 +15,7 @@ import com.github.barteksc.pdfviewer.listener.OnDrawListener
 import com.github.barteksc.pdfviewer.listener.OnPageChangeListener
 import com.github.barteksc.pdfviewer.listener.OnTapListener
 import com.shockwave.pdfium.util.SizeF
+import io.legado.app.model.document.ocr.OcrDocumentHelper
 import io.legado.app.model.document.pdf.PdfDocumentHelper
 import io.legado.app.model.document.pdf.SentenceBox
 import io.legado.app.model.document.pdf.TextPositionService
@@ -24,6 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 /**
  * PDF 原文排版与点击高亮朗读视图。
@@ -109,12 +111,148 @@ class PdfPageView @JvmOverloads constructor(
 
         coroutineScope.launch(Dispatchers.IO) {
             val pageData = PdfDocumentHelper.extractPageData(file, page)
-            val sentences = TextPositionService.buildSentences(pageData.chars, page)
+            var sentences = TextPositionService.buildSentences(pageData.chars, page)
+            val points = pageData.pageSize
+            val pageW = points?.width ?: 0f
+            val pageH = points?.height ?: 0f
+
+            // 1. 扫描版 PDF 离线 OCR 兜底：若矢量文本为空或少于 10 个字符
+            if (sentences.isEmpty() || pageData.chars.size < 10) {
+                val ocrSentences = extractOcrSentencesForPage(file, page, pageW, pageH)
+                if (ocrSentences.isNotEmpty()) {
+                    sentences = ocrSentences
+                }
+            } else {
+                // 2. 图文混排融合：既有矢量文本又有图片/图表
+                val ocrSentences = extractOcrSentencesForPage(file, page, pageW, pageH)
+                if (ocrSentences.isNotEmpty()) {
+                    sentences = mergeOcrWithVectorSentences(sentences, ocrSentences)
+                }
+            }
+
+            // 3. 视觉拓扑排序 (top 升序, left 升序)，确保第 0 句必定是页面首行
+            sentences = sortSentencesVisually(sentences)
+
             withContext(Dispatchers.Main) {
                 pageSentencesCache[page] = sentences
                 if (pageData.pageSize != null && pageData.pageSize.width > 0f && pageData.pageSize.height > 0f) {
                     pagePointSizes[page] = pageData.pageSize
                 }
+            }
+        }
+    }
+
+    /**
+     * 离线 OCR 渲染识别当前页，并将归一化坐标换算为 PDF 物理点坐标
+     */
+    private suspend fun extractOcrSentencesForPage(
+        file: File,
+        page: Int,
+        pageW: Float,
+        pageH: Float
+    ): List<SentenceBox> {
+        val bitmap = PdfDocumentHelper.renderPageToBitmap(file, page) ?: return emptyList()
+        val cacheKey = "pdf_ocr_${file.absolutePath}_$page"
+        val normOcrSentences = try {
+            OcrDocumentHelper.recognizeBitmap(bitmap, page, cacheKey)
+        } finally {
+            if (!bitmap.isRecycled) {
+                bitmap.recycle()
+            }
+        }
+        if (normOcrSentences.isEmpty()) return emptyList()
+
+        val realW = if (pageW > 0f) pageW else 1200f
+        val realH = if (pageH > 0f) pageH else 1600f
+
+        return normOcrSentences.map { s ->
+            val scaledRects = s.rects.map { r ->
+                RectF(
+                    r.left * realW,
+                    r.top * realH,
+                    r.right * realW,
+                    r.bottom * realH
+                )
+            }
+            SentenceBox(s.text, scaledRects, page)
+        }
+    }
+
+    /**
+     * 图文混排去重与融合：将未被矢量文本覆盖的独立图片文字（插图文字、扫描表格）合并进来
+     */
+    private fun mergeOcrWithVectorSentences(
+        vectorList: List<SentenceBox>,
+        ocrList: List<SentenceBox>
+    ): List<SentenceBox> {
+        val merged = ArrayList<SentenceBox>(vectorList)
+        val vectorFullText = vectorList.joinToString("") { it.text.filter { c -> !c.isWhitespace() } }
+
+        for (ocrBox in ocrList) {
+            val cleanOcrText = ocrBox.text.filter { !it.isWhitespace() }
+            if (cleanOcrText.length < 2) continue
+
+            // 内容去重：若矢量文本已包含该 OCR 文本，跳过
+            if (cleanOcrText.length >= 4 && vectorFullText.contains(cleanOcrText)) {
+                continue
+            }
+
+            // 空间重叠率判定：若 OCR 矩形与矢量句子的矩形重叠，判定为已有矢量文字，跳过
+            val ocrBounds = getBoundingBox(ocrBox.rects)
+            val hasOverlap = vectorList.any { vBox ->
+                val vBounds = getBoundingBox(vBox.rects)
+                isOverlapping(ocrBounds, vBounds)
+            }
+
+            if (!hasOverlap) {
+                // 属于独立图片中的文字，合并至阅读列表
+                merged.add(ocrBox)
+            }
+        }
+        return merged
+    }
+
+    private fun getBoundingBox(rects: List<RectF>): RectF {
+        if (rects.isEmpty()) return RectF()
+        var left = Float.POSITIVE_INFINITY
+        var top = Float.POSITIVE_INFINITY
+        var right = Float.NEGATIVE_INFINITY
+        var bottom = Float.NEGATIVE_INFINITY
+        for (r in rects) {
+            if (r.left < left) left = r.left
+            if (r.top < top) top = r.top
+            if (r.right > right) right = r.right
+            if (r.bottom > bottom) bottom = r.bottom
+        }
+        return RectF(left, top, right, bottom)
+    }
+
+    private fun isOverlapping(r1: RectF, r2: RectF): Boolean {
+        val left = maxOf(r1.left, r2.left)
+        val right = minOf(r1.right, r2.right)
+        val top = maxOf(r1.top, r2.top)
+        val bottom = minOf(r1.bottom, r2.bottom)
+        if (right <= left || bottom <= top) return false
+        val interArea = (right - left) * (bottom - top)
+        val area1 = r1.width() * r1.height()
+        val area2 = r2.width() * r2.height()
+        val minArea = minOf(area1, area2)
+        return if (minArea > 0) (interArea / minArea) > 0.25f else false
+    }
+
+    /**
+     * 句子视觉拓扑排序 (top 升序, left 升序)，消除流对象乱序导致的朗读起始跳行
+     */
+    private fun sortSentencesVisually(list: List<SentenceBox>): List<SentenceBox> {
+        return list.sortedWith { a, b ->
+            val aTop = a.rects.firstOrNull()?.top ?: 0f
+            val bTop = b.rects.firstOrNull()?.top ?: 0f
+            val aLeft = a.rects.firstOrNull()?.left ?: 0f
+            val bLeft = b.rects.firstOrNull()?.left ?: 0f
+            if (abs(aTop - bTop) < 8f) {
+                aLeft.compareTo(bLeft)
+            } else {
+                aTop.compareTo(bTop)
             }
         }
     }

@@ -1,11 +1,17 @@
 package io.legado.app.model.document.pdf
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import com.shockwave.pdfium.util.SizeF
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
+import io.legado.app.constant.AppLog
 import java.io.File
 import java.io.InputStream
 
@@ -75,6 +81,39 @@ object PdfDocumentHelper {
             return doc.numberOfPages
         } finally {
             doc.close()
+        }
+    }
+
+    /**
+     * 将 PDF 指定页渲染为 Bitmap，用于 OCR 兜底或图文混排识别。
+     */
+    fun renderPageToBitmap(file: File, pageIndex: Int, targetWidth: Int = 1200): Bitmap? {
+        if (!file.exists()) return null
+        var pfd: ParcelFileDescriptor? = null
+        var renderer: PdfRenderer? = null
+        var page: PdfRenderer.Page? = null
+        return try {
+            pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            renderer = PdfRenderer(pfd)
+            if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
+            page = renderer.openPage(pageIndex)
+            val origW = page.width
+            val origH = page.height
+            val scale = targetWidth.toFloat() / origW.coerceAtLeast(1)
+            val w = (origW * scale).toInt().coerceAtLeast(1)
+            val h = (origH * scale).toInt().coerceAtLeast(1)
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(Color.WHITE)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            bitmap
+        } catch (t: Throwable) {
+            AppLog.put("PdfRenderer 渲染第 $pageIndex 页位图失败", t)
+            null
+        } finally {
+            try { page?.close() } catch (_: Throwable) {}
+            try { renderer?.close() } catch (_: Throwable) {}
+            try { pfd?.close() } catch (_: Throwable) {}
         }
     }
 }

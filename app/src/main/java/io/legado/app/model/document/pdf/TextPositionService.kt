@@ -149,7 +149,17 @@ object TextPositionService {
             }
             flush()
         }
-        return result
+        return result.sortedWith { a, b ->
+            val aTop = a.rects.firstOrNull()?.top ?: 0f
+            val bTop = b.rects.firstOrNull()?.top ?: 0f
+            val aLeft = a.rects.firstOrNull()?.left ?: 0f
+            val bLeft = b.rects.firstOrNull()?.left ?: 0f
+            if (abs(aTop - bTop) < 8f) {
+                aLeft.compareTo(bLeft)
+            } else {
+                aTop.compareTo(bTop)
+            }
+        }
     }
 
     private fun splitLineBlocks(lines: List<Line>, gap: Float): List<List<Line>> {

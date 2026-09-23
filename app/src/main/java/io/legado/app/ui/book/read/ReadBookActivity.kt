@@ -56,6 +56,8 @@ import io.legado.app.ui.book.read.page.PdfPageView
 import io.legado.app.ui.book.read.page.DocxPageView
 import io.legado.app.ui.book.read.page.ImagePageView
 import io.legado.app.model.document.pdf.SentenceBox
+import io.legado.app.lib.theme.ThemeStore
+import android.graphics.Color
 import java.io.File
 import io.legado.app.help.book.update
 import io.legado.app.help.config.AppConfig
@@ -1090,7 +1092,10 @@ class ReadBookActivity : BaseReadBookActivity(),
 
         binding.readView.visibility = View.GONE
         binding.documentContainer.visibility = View.VISIBLE
-        binding.documentContainer.setPadding(0, statusBarHeight, 0, 0)
+        val isDark = AppConfig.isNightTheme || ThemeStore.isDark(this)
+        val bgColor = if (isDark) Color.parseColor("#121212") else Color.WHITE
+        binding.documentContainer.setBackgroundColor(bgColor)
+        upDocumentContainerPadding()
 
         val file = try {
             BookHelp.getLocalOrCachedFile(book)
@@ -1114,6 +1119,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                     }
                     onPageChangedListener = { page, total ->
                         ReadBook.durChapterIndex = page
+                        docSentenceIndex = 0
                         upSeekBarProgress()
                     }
                 }
@@ -1242,7 +1248,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 toastOnUi("当前页面未提取到朗读文本")
                 return
             }
-            if (docSentenceIndex !in sentences.indices) {
+            if (pdf.currentSentenceIndex !in sentences.indices || docSentenceIndex !in sentences.indices) {
                 docSentenceIndex = 0
             }
             isDocReadingAloud = true
@@ -1653,6 +1659,14 @@ class ReadBookActivity : BaseReadBookActivity(),
     override fun upSystemUiVisibility() {
         upSystemUiVisibility(isInMultiWindow, !menuLayoutIsVisible, bottomDialog > 0)
         upNavigationBarColor()
+        upDocumentContainerPadding()
+    }
+
+    private fun upDocumentContainerPadding() {
+        if (binding.documentContainer.visibility == View.VISIBLE) {
+            val topPadding = if (ReadBookConfig.hideStatusBar) 0 else statusBarHeight
+            binding.documentContainer.setPadding(0, topPadding, 0, 0)
+        }
     }
 
     // 退出全文搜索

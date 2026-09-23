@@ -129,7 +129,12 @@ object DocxHtmlConverter {
                         var prev = document.querySelector('.wm-hl');
                         if (prev) prev.classList.remove('wm-hl');
                         el.classList.add('wm-hl');
-                        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        var rect = el.getBoundingClientRect();
+                        var vh = window.innerHeight || document.documentElement.clientHeight;
+                        var inView = (rect.top >= 20 && rect.bottom <= (vh - 30));
+                        if (!inView) {
+                            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }
                     }
                 }
             """.trimIndent())
