@@ -116,4 +116,51 @@ object PdfDocumentHelper {
             try { pfd?.close() } catch (_: Throwable) {}
         }
     }
+
+    /**
+     * 提取 PDF 原生大纲（书签），返回页码（0-indexed）到书签标题的映射。
+     */
+    fun extractOutline(file: File): Map<Int, String> {
+        val map = mutableMapOf<Int, String>()
+        if (!file.exists()) return map
+        try {
+            val doc = PDDocument.load(file)
+            doc.use { document ->
+                val outline = document.documentCatalog?.documentOutline ?: return map
+                fun traverse(item: com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.outline.PDOutlineItem) {
+                    try {
+                        val title = item.title
+                        val page = when (val dest = item.destination) {
+                            is com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination -> dest.page
+                            else -> {
+                                val action = item.action
+                                if (action is com.tom_roush.pdfbox.pdmodel.interactive.action.PDActionGoTo) {
+                                    (action.destination as? com.tom_roush.pdfbox.pdmodel.interactive.documentnavigation.destination.PDPageDestination)?.page
+                                } else null
+                            }
+                        }
+                        if (page != null && !title.isNullOrBlank()) {
+                            val pageIdx = document.pages.indexOf(page)
+                            if (pageIdx >= 0 && !map.containsKey(pageIdx)) {
+                                map[pageIdx] = title.trim()
+                            }
+                        }
+                    } catch (_: Throwable) {}
+                    var child = item.firstChild
+                    while (child != null) {
+                        traverse(child)
+                        child = child.nextSibling
+                    }
+                }
+                var cur = outline.firstChild
+                while (cur != null) {
+                    traverse(cur)
+                    cur = cur.nextSibling
+                }
+            }
+        } catch (t: Throwable) {
+            AppLog.put("PDF 大纲提取失败", t)
+        }
+        return map
+    }
 }

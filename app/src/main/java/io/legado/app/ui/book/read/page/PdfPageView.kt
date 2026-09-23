@@ -14,7 +14,10 @@ import com.github.barteksc.pdfviewer.PdfViewGeometryBridge
 import com.github.barteksc.pdfviewer.listener.OnDrawListener
 import com.github.barteksc.pdfviewer.listener.OnPageChangeListener
 import com.github.barteksc.pdfviewer.listener.OnTapListener
+import com.github.barteksc.pdfviewer.util.FitPolicy
 import com.shockwave.pdfium.util.SizeF
+import io.legado.app.help.config.AppConfig
+import io.legado.app.help.config.ReadBookConfig
 import io.legado.app.model.document.ocr.OcrDocumentHelper
 import io.legado.app.model.document.pdf.PdfDocumentHelper
 import io.legado.app.model.document.pdf.SentenceBox
@@ -80,12 +83,24 @@ class PdfPageView @JvmOverloads constructor(
         pagePointSizes.clear()
         highlights.clear()
 
+        val isDark = AppConfig.isNightTheme
+        val bgColor = if (isDark) Color.parseColor("#121212") else {
+            ReadBookConfig.durConfig.bgMeanColor.takeIf { it != 0 } ?: Color.parseColor("#F5F2E9")
+        }
+        setBackgroundColor(bgColor)
+        pdfView.setBackgroundColor(bgColor)
+
         pdfView.fromFile(file)
             .defaultPage(initialPage)
             .enableSwipe(true)
-            .swipeHorizontal(false)
+            .swipeHorizontal(true)
+            .pageSnap(true)
+            .pageFling(true)
+            .autoSpacing(true)
+            .pageFitPolicy(FitPolicy.BOTH)
+            .fitEachPage(true)
             .enableDoubletap(true)
-            .defaultPage(initialPage)
+            .nightMode(isDark)
             .onDraw(OnDrawListener { canvas, pageWidth, pageHeight, displayedPage ->
                 drawHighlights(canvas, pageWidth, pageHeight, displayedPage)
             })
@@ -292,66 +307,41 @@ class PdfPageView @JvmOverloads constructor(
         canvas.restoreToCount(saved)
     }
 
-    /** 点击处理与坐标换算 */
+    /** 点击处理：三分屏手势对齐 Legado 原生阅读操作，彻底取消正文点读防误触 */
     private fun handleTap(e: MotionEvent): Boolean {
-        if (!PdfViewGeometryBridge.isReady(pdfView)) return false
-
-        // 检测是否点击中心区域呼出菜单
         val w = width.toFloat()
         val h = height.toFloat()
-        if (w > 0 && h > 0) {
-            val cx1 = w * 0.3f
-            val cx2 = w * 0.7f
-            val cy1 = h * 0.3f
-            val cy2 = h * 0.7f
-            if (e.x in cx1..cx2 && e.y in cy1..cy2) {
-                onCenterClickListener?.invoke()
-                return true
-            }
+        if (w <= 0f || h <= 0f) return false
+
+        val x = e.x
+        val y = e.y
+
+        val cx1 = w * 0.3f
+        val cx2 = w * 0.7f
+        val cy1 = h * 0.3f
+        val cy2 = h * 0.7f
+
+        // 1. 中间 30% ~ 70% 区域：呼出/隐藏 Legado 动作菜单
+        if (x in cx1..cx2 && y in cy1..cy2) {
+            onCenterClickListener?.invoke()
+            return true
         }
 
-        val mappedX = -pdfView.currentXOffset + e.x
-        val mappedY = -pdfView.currentYOffset + e.y
-        val vertical = pdfView.isSwipeVertical
-        val page = PdfViewGeometryBridge.getPageAtOffset(pdfView, if (vertical) mappedY else mappedX)
-
-        val primary = PdfViewGeometryBridge.getPageOffset(pdfView, page)
-        val secondary = PdfViewGeometryBridge.getSecondaryPageOffset(pdfView, page)
-        val pageLeft = if (vertical) secondary else primary
-        val pageTop = if (vertical) primary else secondary
-
-        val zoom = pdfView.zoom
-        if (zoom <= 0f) return false
-
-        val fittedX = (mappedX - pageLeft) / zoom
-        val fittedY = (mappedY - pageTop) / zoom
-
-        val fitted = PdfViewGeometryBridge.getPageSize(pdfView, page)
-        if (fitted.width <= 0f || fitted.height <= 0f) return false
-        if (fittedX < 0f || fittedY < 0f || fittedX > fitted.width || fittedY > fitted.height) {
-            return false
+        // 2. 左侧 0% ~ 30% 区域：上一页（单页）
+        if (x < cx1) {
+            prevPage()
+            return true
         }
 
-        val points = pagePointSizes[page]
-        val pageW = points?.width ?: fitted.width
-        val pageH = points?.height ?: fitted.height
-        val scaleX = if (fitted.width > 0f) pageW / fitted.width else 1f
-        val scaleY = if (fitted.height > 0f) pageH / fitted.height else 1f
-
-        val pdfX = fittedX * scaleX
-        val pdfY = fittedY * scaleY
-
-        val sentences = pageSentencesCache[page]
-        if (!sentences.isNullOrEmpty()) {
-            val hit = TextPositionService.hitSentence(sentences, PointF(pdfX, pdfY))
-            if (hit != null) {
-                highlightSentence(page, hit)
-                val index = sentences.indexOf(hit)
-                onSentenceClickListener?.invoke(hit, index)
-                return true
-            }
+        // 3. 右侧 70% ~ 100% 区域：下一页（单页）
+        if (x > cx2) {
+            nextPage()
+            return true
         }
-        return false
+
+        // 4. 上下边缘区域默认呼出菜单
+        onCenterClickListener?.invoke()
+        return true
     }
 
     /** 高亮指定句子 */
@@ -386,24 +376,25 @@ class PdfPageView @JvmOverloads constructor(
 
     /** 跳转到下一页 */
     fun nextPage() {
-        if (currentPage < pdfView.pageCount - 1) {
-            pdfView.jumpTo(currentPage + 1, true)
+        if (PdfViewGeometryBridge.isReady(pdfView) && currentPage < pdfView.pageCount - 1) {
+            jumpTo(currentPage + 1)
         }
     }
 
     /** 跳转到上一页 */
     fun prevPage() {
-        if (currentPage > 0) {
-            pdfView.jumpTo(currentPage - 1, true)
+        if (PdfViewGeometryBridge.isReady(pdfView) && currentPage > 0) {
+            jumpTo(currentPage - 1)
         }
     }
 
     /** 跳转到指定页（0-indexed） */
     fun jumpTo(page: Int) {
-        if (page in 0 until pdfView.pageCount) {
-            currentPage = page
-            pdfView.jumpTo(page, true)
-        }
+        if (!PdfViewGeometryBridge.isReady(pdfView)) return
+        val targetPage = page.coerceIn(0, (pdfView.pageCount - 1).coerceAtLeast(0))
+        currentPage = targetPage
+        pdfView.jumpTo(targetPage, true)
+        loadPageSentences(targetPage)
     }
 }
 

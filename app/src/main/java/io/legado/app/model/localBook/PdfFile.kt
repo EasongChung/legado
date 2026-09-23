@@ -8,7 +8,9 @@ import androidx.core.graphics.createBitmap
 import io.legado.app.constant.AppLog
 import io.legado.app.data.entities.Book
 import io.legado.app.data.entities.BookChapter
+import io.legado.app.help.book.BookHelp
 import io.legado.app.help.book.getLocalUri
+import io.legado.app.model.document.pdf.PdfDocumentHelper
 import io.legado.app.utils.BitmapUtils
 import io.legado.app.utils.FileUtils
 import io.legado.app.utils.SystemUtils
@@ -139,36 +141,28 @@ class PdfFile(var book: Book) {
             null
         } else {
             pdfRenderer?.let { renderer ->
-
-                buildString {
-                    val start = chapter.index * PAGE_SIZE
-                    val end = ((chapter.index + 1) * PAGE_SIZE).coerceAtMost(renderer.pageCount)
-                    (start until end).forEach {
-                        append("<img src=").append('"').append(it).append('"').append(" >")
-                            .append('\n')
-                    }
-
-                }
-
+                val pageIdx = chapter.index
+                if (pageIdx in 0 until renderer.pageCount) {
+                    "<img src=\"$pageIdx\">\n"
+                } else null
             }
         }
-
 
     private fun getImage(href: String): InputStream? {
         if (pdfRenderer == null) {
             return null
         }
         return try {
-            val index = href.toInt()
+            val clean = href.substringAfterLast('/').substringBeforeLast('.')
+            val index = clean.toIntOrNull() ?: href.toInt()
             val bitmap = openPdfPage(pdfRenderer!!, index)
             if (bitmap != null) {
                 BitmapUtils.toInputStream(bitmap)
             } else {
                 null
             }
-
         } catch (_: Exception) {
-            return null
+            null
         }
     }
 
@@ -177,13 +171,31 @@ class PdfFile(var book: Book) {
 
         pdfRenderer?.let { renderer ->
             if (renderer.pageCount > 0) {
-                val chapterCount = ceil((renderer.pageCount.toDouble() / PAGE_SIZE)).toInt()
-                (0 until chapterCount).forEach {
+                val file = try {
+                    val uri = book.getLocalUri()
+                    if (uri.isContentScheme()) {
+                        BookHelp.getLocalOrCachedFile(book)
+                    } else {
+                        File(uri.path ?: book.bookUrl)
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+                val outlineMap = if (file != null && file.exists()) {
+                    PdfDocumentHelper.extractOutline(file)
+                } else emptyMap()
+
+                (0 until renderer.pageCount).forEach { pageIdx ->
                     val chapter = BookChapter()
-                    chapter.index = it
+                    chapter.index = pageIdx
                     chapter.bookUrl = book.bookUrl
-                    chapter.title = "分段_${it}"
-                    chapter.url = "pdf_${it}"
+                    val bookmarkTitle = outlineMap[pageIdx]
+                    chapter.title = if (!bookmarkTitle.isNullOrBlank()) {
+                        "$bookmarkTitle (P.${pageIdx + 1})"
+                    } else {
+                        "第 ${pageIdx + 1} 页"
+                    }
+                    chapter.url = "pdf_page_$pageIdx"
                     chapterList.add(chapter)
                 }
             }

@@ -436,7 +436,7 @@ object BookHelp {
         }
         if (book.isLocal) {
             val string = LocalBook.getContent(book, bookChapter)
-            if (string != null && book.isEpub) {
+            if (string != null && (book.isEpub || book.isDocx)) {
                 saveText(book, bookChapter, string)
             }
             return string

@@ -53,7 +53,6 @@ import io.legado.app.help.book.isMobi
 import io.legado.app.help.book.isPdf
 import io.legado.app.help.book.removeType
 import io.legado.app.ui.book.read.page.PdfPageView
-import io.legado.app.ui.book.read.page.DocxPageView
 import io.legado.app.ui.book.read.page.ImagePageView
 import io.legado.app.model.document.pdf.SentenceBox
 import android.graphics.Color
@@ -176,13 +175,6 @@ class ReadBookActivity : BaseReadBookActivity(),
                     pdfPageView?.jumpTo(it.first)
                     upSeekBarProgress()
                     return@registerForActivityResult
-                }
-                if (book != null && book.isDocx) {
-                    ReadBook.durChapterIndex = it.first
-                    docxPageView?.highlightIndex(it.first)
-                    upSeekBarProgress()
-                    return@registerForActivityResult
-                }
                 if (book != null && isImageBook(book)) {
                     ReadBook.durChapterIndex = it.first
                     ReadBook.loadContent(resetPageOffset = true)
@@ -245,7 +237,6 @@ class ReadBookActivity : BaseReadBookActivity(),
     private var backupJob: Job? = null
     private var tts: TTS? = null
     private var pdfPageView: PdfPageView? = null
-    private var docxPageView: DocxPageView? = null
     private var imagePageView: ImagePageView? = null
     internal var isDocReadingAloud = false
 
@@ -1080,10 +1071,9 @@ class ReadBookActivity : BaseReadBookActivity(),
     private fun checkAndSetupDocumentView() {
         val book = ReadBook.book ?: return
         val isPdf = book.isPdf
-        val isDocx = book.isDocx
         val isImage = isImageBook(book)
 
-        if (!isPdf && !isDocx && !isImage) {
+        if (!isPdf && !isImage) {
             binding.documentContainer.visibility = View.GONE
             binding.readView.visibility = View.VISIBLE
             return
@@ -1092,7 +1082,9 @@ class ReadBookActivity : BaseReadBookActivity(),
         binding.readView.visibility = View.GONE
         binding.documentContainer.visibility = View.VISIBLE
         val isDark = AppConfig.isNightTheme
-        val bgColor = if (isDark) Color.parseColor("#121212") else Color.WHITE
+        val bgColor = if (isDark) Color.parseColor("#121212") else {
+            ReadBookConfig.durConfig.bgMeanColor.takeIf { it != 0 } ?: Color.parseColor("#F5F2E9")
+        }
         binding.documentContainer.setBackgroundColor(bgColor)
         upDocumentContainerPadding()
 
@@ -1107,15 +1099,10 @@ class ReadBookActivity : BaseReadBookActivity(),
         }
 
         if (isPdf) {
-            docxPageView?.visibility = View.GONE
             imagePageView?.visibility = View.GONE
             if (pdfPageView == null) {
                 pdfPageView = PdfPageView(this).apply {
                     onCenterClickListener = { showActionMenu() }
-                    onSentenceClickListener = { sentence, index ->
-                        docSentenceIndex = index
-                        speakDocumentSentence(sentence.text)
-                    }
                     onPageChangedListener = { page, total ->
                         ReadBook.durChapterIndex = page
                         docSentenceIndex = 0
@@ -1130,30 +1117,8 @@ class ReadBookActivity : BaseReadBookActivity(),
             }
             pdfPageView?.visibility = View.VISIBLE
             pdfPageView?.openFile(file, ReadBook.durChapterIndex)
-        } else if (isDocx) {
-            pdfPageView?.visibility = View.GONE
-            imagePageView?.visibility = View.GONE
-            if (docxPageView == null) {
-                docxPageView = DocxPageView(this).apply {
-                    onCenterClickListener = { showActionMenu() }
-                    onSentenceClickListener = { text, index ->
-                        if (index >= 0) {
-                            docSentenceIndex = index
-                        }
-                        speakDocumentSentence(text)
-                    }
-                }
-                binding.documentContainer.addView(
-                    docxPageView,
-                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                )
-            }
-            docxPageView?.visibility = View.VISIBLE
-            docxPageView?.openFile(file)
         } else if (isImage) {
             pdfPageView?.visibility = View.GONE
-            docxPageView?.visibility = View.GONE
             if (imagePageView == null) {
                 imagePageView = ImagePageView(this).apply {
                     onCenterClickListener = { showActionMenu() }
@@ -1259,25 +1224,6 @@ class ReadBookActivity : BaseReadBookActivity(),
                 startDocTimer()
             }
             readNextPdfSentence()
-        } else if (book.isDocx) {
-            val docx = docxPageView ?: return
-            val sentences = docx.getSentences()
-            if (sentences.isEmpty()) {
-                toastOnUi("当前文档未提取到朗读文本")
-                return
-            }
-            if (docSentenceIndex !in sentences.indices) {
-                docSentenceIndex = if (docx.currentSentenceIndex in sentences.indices) docx.currentSentenceIndex else 0
-            }
-            isDocReadingAloud = true
-            acquireDocWakeLock()
-            postEvent(EventBus.ALOUD_STATE, Status.PLAY)
-            showReadAloudDialog()
-            if (AppConfig.ttsTimer > 0) {
-                docTimerMinute = AppConfig.ttsTimer
-                startDocTimer()
-            }
-            readNextDocxSentence()
         } else if (isImageBook(book)) {
             val imgView = imagePageView ?: return
             val sentences = imgView.getSentences()
@@ -1350,25 +1296,6 @@ class ReadBookActivity : BaseReadBookActivity(),
         }
     }
 
-    private fun readNextDocxSentence() {
-        val docx = docxPageView ?: return
-        if (!isDocReadingAloud) return
-        val sentences = docx.getSentences()
-        if (docSentenceIndex in sentences.indices) {
-            val text = sentences[docSentenceIndex]
-            docx.highlightIndex(docSentenceIndex)
-            speakTtsWithCallback(text) {
-                docSentenceIndex++
-                runOnUiThread {
-                    readNextDocxSentence()
-                }
-            }
-        } else {
-            stopDocumentReadAloud()
-            toastOnUi("文档朗读完毕")
-        }
-    }
-
     private fun speakTtsWithCallback(text: String, onDone: () -> Unit) {
         if (tts == null) {
             tts = TTS()
@@ -1401,11 +1328,6 @@ class ReadBookActivity : BaseReadBookActivity(),
                     readNextPdfSentence()
                 }, 600)
             }
-        } else if (book.isDocx) {
-            if (docSentenceIndex > 0) {
-                docSentenceIndex--
-            }
-            readNextDocxSentence()
         } else if (isImageBook(book)) {
             val imgView = imagePageView ?: return
             val sentences = imgView.getSentences()
@@ -1438,9 +1360,6 @@ class ReadBookActivity : BaseReadBookActivity(),
                     readNextPdfSentence()
                 }, 600)
             }
-        } else if (book.isDocx) {
-            docSentenceIndex++
-            readNextDocxSentence()
         } else if (isImageBook(book)) {
             val imgView = imagePageView ?: return
             val sentences = imgView.getSentences()
@@ -1766,7 +1685,7 @@ class ReadBookActivity : BaseReadBookActivity(),
     override fun onClickReadAloud() {
         autoPageStop()
         val book = ReadBook.book
-        if (book?.isPdf == true || book?.isDocx == true || isImageBook(book)) {
+        if (book?.isPdf == true || isImageBook(book)) {
             if (isDocReadingAloud) {
                 isDocReadingAloud = false
                 tts?.stop()
