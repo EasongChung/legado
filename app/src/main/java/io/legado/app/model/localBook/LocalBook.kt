@@ -28,6 +28,8 @@ import io.legado.app.help.book.getRemoteUrl
 import io.legado.app.help.book.isArchive
 import io.legado.app.help.book.isDocx
 import io.legado.app.help.book.isEpub
+import io.legado.app.help.book.isImage
+import io.legado.app.help.book.isLocalImage
 import io.legado.app.help.book.isMobi
 import io.legado.app.help.book.isPdf
 import io.legado.app.help.book.isUmd
@@ -139,6 +141,10 @@ object LocalBook {
                 MobiFile.getChapterList(book)
             }
 
+            book.isImage || book.isLocalImage -> {
+                ImageFile.getChapterList(book)
+            }
+
             else -> {
                 TextFile.getChapterList(book)
             }
@@ -185,6 +191,10 @@ object LocalBook {
 
                 book.isMobi -> {
                     MobiFile.getContent(book, chapter)
+                }
+
+                book.isImage || book.isLocalImage -> {
+                    ImageFile.getContent(book, chapter)
                 }
 
                 else -> {
@@ -248,8 +258,10 @@ object LocalBook {
         var book = appDb.bookDao.getBook(bookUrl)
         if (book == null) {
             val nameAuthor = analyzeNameAuthor(fileName)
+            val isImg = fileName.matches(Regex(".*\\.(jpg|jpeg|png|webp|bmp)$", RegexOption.IGNORE_CASE))
+            val initialType = if (isImg) BookType.image or BookType.local else BookType.text or BookType.local
             book = Book(
-                type = BookType.text or BookType.local,
+                type = initialType,
                 bookUrl = bookUrl,
                 name = nameAuthor.first,
                 author = nameAuthor.second,
@@ -277,6 +289,7 @@ object LocalBook {
             book.isPdf -> PdfFile.upBookInfo(book)
             book.isDocx -> DocxFile.upBookInfo(book)
             book.isMobi -> MobiFile.upBookInfo(book)
+            book.isImage || book.isLocalImage -> ImageFile.upBookInfo(book)
         }
     }
 
