@@ -10,25 +10,38 @@ import java.util.zip.ZipFile
 import javax.xml.parsers.DocumentBuilderFactory
 
 /**
- * Word (.docx) -> HTML 转换器（流式排版与点读增强）。
- *
- * 将 .docx 文档还原为内联样式的轻量 HTML，用于 WebView 原文渲染。
- * 覆盖：段落对齐/首行缩进/行距、加粗/斜体/下划线/字号/颜色、图片（base64）、表格。
- * 同时注入点读与高亮控制脚本。
+ * Word (.docx) 单页数据结构
  */
+data class DocxPageData(
+    val pageIndex: Int,
+    val title: String,
+    val htmlBody: String,
+    val sentences: List<String>
+)
+
+data class DocxDocumentData(
+    val pages: List<DocxPageData>
+)
+
 data class DocxResult(
     val html: String,
     val sentences: List<String>
 )
 
+/**
+ * Word (.docx) -> HTML 转换器（单页原文流式排版与精准高亮朗读增强）。
+ *
+ * 将 .docx 还原为内联样式的轻量 HTML，用于单页原文渲染。
+ * 覆盖：段落对齐/首行缩进/行距、加粗/斜体/下划线/字号/颜色、图片（base64）、表格。
+ */
 object DocxHtmlConverter {
 
     private const val NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
     /**
-     * 将 docx 文件转成 HTML 字符串与句子/段落列表
+     * 将 docx 文件转成多页结构，每页拥有独立的 HTML body 和句子列表
      */
-    fun convert(filePath: String): DocxResult {
+    fun convertToPages(filePath: String): DocxDocumentData {
         val file = File(filePath)
         if (!file.exists()) {
             throw IllegalArgumentException("Word 文件不存在: $filePath")
@@ -64,87 +77,208 @@ object DocxHtmlConverter {
             val doc = dBuilder.parse(docStream)
             doc.documentElement.normalize()
 
-            // 3. 构建 HTML
-            val sb = StringBuilder()
-            val sentences = mutableListOf<String>()
-            sb.append("<!DOCTYPE html><html><head><meta charset=\"utf-8\">")
-            sb.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">")
-            sb.append("<style>")
-            sb.append("body { font-family: -apple-system, sans-serif; margin: 16px; font-size: 17px; line-height: 1.8; color: #2C3E50; background: #FFFFFF; word-break: break-word; -webkit-tap-highlight-color: transparent; }")
-            sb.append("table { border-collapse: collapse; width: 100%; margin: 8px 0; }")
-            sb.append("td, th { border: 1px solid #BDC3C7; padding: 6px 10px; vertical-align: top; }")
-            sb.append("img { max-width: 100%; height: auto; display: block; margin: 8px auto; border-radius: 4px; }")
-            sb.append(".wm-hl { background: #FFE0B2 !important; border-radius: 4px; transition: background 0.2s ease; }")
-            sb.append("</style></head><body>")
-
+            val pages = mutableListOf<DocxPageData>()
             val bodyList = doc.getElementsByTagNameNS(NS_W, "body")
-            var blockCount = 0
+
+            var curPageIndex = 0
+            var curTitle = "第 1 页"
+            val curBody = StringBuilder()
+            val curSentences = mutableListOf<String>()
+            var curCharCount = 0
+
+            fun commitPage(nextTitle: String) {
+                val htmlStr = curBody.toString().trim()
+                if (htmlStr.isNotEmpty() || curPageIndex == 0) {
+                    pages.add(
+                        DocxPageData(
+                            pageIndex = curPageIndex,
+                            title = curTitle,
+                            htmlBody = htmlStr.ifEmpty { "<p>（空页）</p>" },
+                            sentences = ArrayList(curSentences)
+                        )
+                    )
+                    curPageIndex++
+                }
+                curBody.clear()
+                curSentences.clear()
+                curCharCount = 0
+                curTitle = nextTitle
+            }
+
             if (bodyList.length > 0) {
                 val body = bodyList.item(0) as Element
                 val children = body.childNodes
+
                 for (i in 0 until children.length) {
                     val child = children.item(i)
-                    if (child.nodeType == Node.ELEMENT_NODE) {
-                        val blockHtml = elementToHtml(child as Element, mediaMap, sentences)
-                        if (blockHtml.isNotEmpty()) {
-                            sb.append(blockHtml)
-                            blockCount++
+                    if (child.nodeType != Node.ELEMENT_NODE) continue
+                    val element = child as Element
+
+                    val hasPageBreak = checkPageBreak(element)
+                    val isHeading = checkHeading(element)
+                    val blockText = element.textContent?.trim() ?: ""
+
+                    // 1. 显式分页符
+                    if (hasPageBreak && curBody.isNotEmpty()) {
+                        commitPage("第 ${curPageIndex + 1} 页")
+                    } else if (isHeading && blockText.isNotBlank() && curBody.isNotEmpty()) {
+                        commitPage(blockText.take(20))
+                    }
+
+                    val blockHtml = elementToHtml(element, mediaMap, curSentences)
+                    if (blockHtml.isNotEmpty()) {
+                        curBody.append(blockHtml)
+                        curCharCount += blockText.length
+
+                        // 2. 长文档自然适读分页（每 1200 字符切分为一页，兼顾单页排版体验）
+                        if (curCharCount >= 1200) {
+                            commitPage("第 ${curPageIndex + 1} 页")
                         }
                     }
                 }
             }
 
-            if (blockCount == 0) {
-                sb.append("<p>（文档内容为空或无法提取正文排版）</p>")
+            // 提交最后一页
+            if (curBody.isNotEmpty() || pages.isEmpty()) {
+                pages.add(
+                    DocxPageData(
+                        pageIndex = curPageIndex,
+                        title = curTitle,
+                        htmlBody = curBody.toString().ifEmpty { "<p>（文档内容为空）</p>" },
+                        sentences = ArrayList(curSentences)
+                    )
+                )
             }
 
-            // 注入点读交互脚本与高亮API
-            sb.append("<script>")
-            sb.append("""
-                (function() {
-                    document.addEventListener('click', function(e) {
-                        var el = e.target.closest('[data-idx]');
-                        if (!el) {
-                            el = e.target.closest('p,td,li,h1,h2,h3,h4,h5,h6');
-                        }
-                        if (!el) return;
-                        var text = (el.innerText || el.textContent || '').trim();
-                        if (!text) return;
-                        var idxAttr = el.getAttribute('data-idx');
-                        var idx = idxAttr ? parseInt(idxAttr, 10) : -1;
-                        var prev = document.querySelector('.wm-hl');
-                        if (prev) prev.classList.remove('wm-hl');
-                        el.classList.add('wm-hl');
-                        if (window.DocReadBridge && window.DocReadBridge.onSentenceClick) {
-                            window.DocReadBridge.onSentenceClick(text, idx);
-                        } else {
-                            console.log('DocReadBridge not found on window');
-                        }
-                    }, true);
-                })();
-                
-                function highlightIndex(index) {
-                    var el = document.querySelector('[data-idx="' + index + '"]');
-                    if (el) {
-                        var prev = document.querySelector('.wm-hl');
-                        if (prev) prev.classList.remove('wm-hl');
-                        el.classList.add('wm-hl');
-                        var rect = el.getBoundingClientRect();
-                        var vh = window.innerHeight || document.documentElement.clientHeight;
-                        var inView = (rect.top >= 20 && rect.bottom <= (vh - 30));
-                        if (!inView) {
-                            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        }
-                    }
-                }
-            """.trimIndent())
-            sb.append("</script>")
-            sb.append("</body></html>")
-
-            return DocxResult(sb.toString(), sentences)
+            return DocxDocumentData(pages)
         } finally {
-            zip.close()
+            try { zip.close() } catch (_: Throwable) {}
         }
+    }
+
+    /**
+     * 根据当前阅读主题组装完整的 HTML 页面
+     */
+    fun buildPageHtml(
+        bodyHtml: String,
+        bgColorHex: String,
+        textColorHex: String,
+        isNight: Boolean
+    ): String {
+        val tableBorderColor = if (isNight) "#333333" else "#D0D0D0"
+        return """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+                <style>
+                    * { box-sizing: border-box; }
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+                        margin: 16px;
+                        font-size: 17px;
+                        line-height: 1.8;
+                        color: $textColorHex;
+                        background-color: $bgColorHex;
+                        word-break: break-word;
+                        -webkit-tap-highlight-color: transparent;
+                        user-select: none;
+                    }
+                    table {
+                        border-collapse: collapse;
+                        width: 100%;
+                        margin: 12px 0;
+                    }
+                    td, th {
+                        border: 1px solid $tableBorderColor;
+                        padding: 8px 10px;
+                        vertical-align: top;
+                    }
+                    img {
+                        max-width: 100%;
+                        height: auto;
+                        display: block;
+                        margin: 12px auto;
+                        border-radius: 4px;
+                    }
+                    p {
+                        margin: 8px 0;
+                    }
+                    h1, h2, h3, h4, h5, h6 {
+                        margin: 14px 0 8px 0;
+                        font-weight: bold;
+                        line-height: 1.4;
+                    }
+                    .wm-hl {
+                        background: rgba(255, 167, 38, 0.38) !important;
+                        border-radius: 4px;
+                        transition: background 0.2s ease;
+                    }
+                </style>
+            </head>
+            <body>
+                $bodyHtml
+                <script>
+                    function highlightIndex(index) {
+                        var prev = document.querySelectorAll('.wm-hl');
+                        for (var i = 0; i < prev.length; i++) {
+                            prev[i].classList.remove('wm-hl');
+                        }
+                        var el = document.querySelector('[data-idx="' + index + '"]');
+                        if (el) {
+                            el.classList.add('wm-hl');
+                            var rect = el.getBoundingClientRect();
+                            var vh = window.innerHeight || document.documentElement.clientHeight;
+                            if (rect.top < 20 || rect.bottom > (vh - 30)) {
+                                el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                        }
+                    }
+                </script>
+            </body>
+            </html>
+        """.trimIndent()
+    }
+
+    /**
+     * 兼容接口：单流转换
+     */
+    fun convert(filePath: String): DocxResult {
+        val docData = convertToPages(filePath)
+        val allSentences = mutableListOf<String>()
+        val allHtml = StringBuilder()
+        docData.pages.forEach { page ->
+            allSentences.addAll(page.sentences)
+            allHtml.append(page.htmlBody)
+        }
+        val fullHtml = buildPageHtml(allHtml.toString(), "#FFFFFF", "#2C3E50", false)
+        return DocxResult(fullHtml, allSentences)
+    }
+
+    private fun checkPageBreak(el: Element): Boolean {
+        if (el.localName == "p") {
+            val brs = el.getElementsByTagNameNS(NS_W, "br")
+            for (i in 0 until brs.length) {
+                val br = brs.item(i) as Element
+                val type = br.getAttributeNS(NS_W, "type").ifEmpty { br.getAttribute("type") }
+                if (type == "page") return true
+            }
+            if (el.getElementsByTagNameNS(NS_W, "lastRenderedPageBreak").length > 0) return true
+            val pPr = getFirstChild(el, "pPr")
+            if (pPr != null && getFirstChild(pPr, "sectPr") != null) return true
+        }
+        return false
+    }
+
+    private fun checkHeading(el: Element): Boolean {
+        if (el.localName == "p") {
+            val pPr = getFirstChild(el, "pPr") ?: return false
+            val pStyle = getFirstChild(pPr, "pStyle") ?: return false
+            val styleVal = pStyle.getAttributeNS(NS_W, "val").ifEmpty { pStyle.getAttribute("val") }.lowercase()
+            return styleVal.contains("heading") || styleVal.contains("标题") || styleVal.contains("title")
+        }
+        return false
     }
 
     private fun elementToHtml(el: Element, mediaMap: Map<String, String>, sentences: MutableList<String>): String {
@@ -169,9 +303,18 @@ object DocxHtmlConverter {
 
     private fun paragraphToHtml(p: Element, mediaMap: Map<String, String>, sentences: MutableList<String>): String {
         val style = StringBuilder()
+        var headingLevel = 0
+
         val pPr = getFirstChild(p, "pPr")
         if (pPr != null) {
             parseParaStyle(pPr, style)
+            val pStyle = getFirstChild(pPr, "pStyle")
+            if (pStyle != null) {
+                val styleVal = pStyle.getAttributeNS(NS_W, "val").ifEmpty { pStyle.getAttribute("val") }.lowercase()
+                if (styleVal.contains("heading") || styleVal.contains("标题") || styleVal.contains("title")) {
+                    headingLevel = styleVal.filter { it.isDigit() }.toIntOrNull()?.coerceIn(1, 6) ?: 1
+                }
+            }
         }
         val runs = runsToHtml(p, mediaMap)
         if (runs.isEmpty()) return ""
@@ -184,7 +327,11 @@ object DocxHtmlConverter {
             ""
         }
         val styleAttr = if (style.isNotEmpty()) " style=\"${style.trim()}\"" else ""
-        return "<p$idxAttr$styleAttr>$runs</p>"
+        return if (headingLevel in 1..6) {
+            "<h$headingLevel$idxAttr$styleAttr>$runs</h$headingLevel>"
+        } else {
+            "<p$idxAttr$styleAttr>$runs</p>"
+        }
     }
 
     private fun tableToHtml(tbl: Element, mediaMap: Map<String, String>, sentences: MutableList<String>): String {
@@ -214,7 +361,6 @@ object DocxHtmlConverter {
         }
         return "<table>$rows</table>"
     }
-
 
     private fun parseParaStyle(pPr: Element, out: StringBuilder) {
         val jc = getFirstChild(pPr, "jc")

@@ -145,134 +145,34 @@ class DocxFile(var book: Book) {
         }
 
         try {
-            val zip = ZipFile(file)
-            zip.use { z ->
-                // 1. 读取关系文件: rId -> target (如 rId4 -> media/image1.png)
-                val relsMap = parseRelationships(z)
-
-                // 2. 读取 word/document.xml
-                val docEntry: ZipEntry? = z.getEntry("word/document.xml")
-                if (docEntry == null) {
-                    val defaultChapter = BookChapter().apply {
-                        index = 0
-                        bookUrl = book.bookUrl
-                        title = "正文"
-                        url = "docx_0"
-                    }
-                    chapters.add(defaultChapter)
-                    chapterContents[0] = "无效的 Word 文档（缺少 word/document.xml）"
-                    isParsed = true
-                    return
+            val docData = io.legado.app.model.document.docx.DocxHtmlConverter.convertToPages(file.absolutePath)
+            docData.pages.forEachIndexed { idx, page ->
+                val chapter = BookChapter().apply {
+                    this.index = idx
+                    this.bookUrl = book.bookUrl
+                    this.title = page.title
+                    this.url = "docx_$idx"
                 }
-
-                val docStream = z.getInputStream(docEntry)
-                val dbFactory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
-                val doc = dbFactory.newDocumentBuilder().parse(docStream)
-                doc.documentElement.normalize()
-
-                val bodyList = doc.getElementsByTagNameNS(NS_W, "body")
-                if (bodyList.length == 0) {
-                    val defaultChapter = BookChapter().apply {
-                        index = 0
-                        bookUrl = book.bookUrl
-                        title = "正文"
-                        url = "docx_0"
-                    }
-                    chapters.add(defaultChapter)
-                    chapterContents[0] = "文档内容为空"
-                    isParsed = true
-                    return
+                chapters.add(chapter)
+                chapterContents[idx] = page.htmlBody
+            }
+            if (chapters.isEmpty()) {
+                val defaultChapter = BookChapter().apply {
+                    index = 0
+                    bookUrl = book.bookUrl
+                    title = "第 1 页"
+                    url = "docx_0"
                 }
-
-                val body = bodyList.item(0) as Element
-                val children = body.childNodes
-
-                var chapterIndex = 0
-                var currentTitle = "第 1 页"
-                val currentBuffer = StringBuilder()
-                var currentTextLength = 0
-
-                fun commitChapter(nextTitle: String) {
-                    val htmlContent = currentBuffer.toString().trim()
-                    if (htmlContent.isNotEmpty() || chapterIndex == 0) {
-                        val formatted = HtmlFormatter.formatKeepImg(htmlContent.ifEmpty { "（空页）" })
-                        chapterContents[chapterIndex] = formatted
-                        val chapter = BookChapter().apply {
-                            this.index = chapterIndex
-                            this.bookUrl = book.bookUrl
-                            this.title = currentTitle
-                            this.url = "docx_$chapterIndex"
-                        }
-                        chapters.add(chapter)
-                        chapterIndex++
-                    }
-                    currentBuffer.clear()
-                    currentTextLength = 0
-                    currentTitle = nextTitle
-                }
-
-                for (i in 0 until children.length) {
-                    val child = children.item(i)
-                    if (child.nodeType != Node.ELEMENT_NODE) continue
-                    val element = child as Element
-                    val localName = element.localName ?: element.nodeName.substringAfterLast(':')
-
-                    when (localName) {
-                        "p" -> {
-                            val paraResult = parseParagraph(element, relsMap)
-                            val text = paraResult.plainText
-
-                            // 1. 显式分页符检测
-                            if (paraResult.hasPageBreak && currentBuffer.isNotEmpty()) {
-                                commitChapter("第 ${chapterIndex + 1} 页")
-                            }
-
-                            // 2. 标题大纲检测
-                            if (paraResult.isHeading && text.isNotBlank() && currentBuffer.isNotEmpty()) {
-                                commitChapter(text)
-                            }
-
-                            currentBuffer.append(paraResult.html)
-                            currentTextLength += text.length
-
-                            // 3. 长文档自动分页（按约 1600 字篇幅划分一页，保持单页阅读体验）
-                            if (currentTextLength >= 1600) {
-                                commitChapter("第 ${chapterIndex + 1} 页")
-                            }
-                        }
-
-                        "tbl" -> {
-                            val tableHtml = parseTable(element, relsMap)
-                            currentBuffer.append(tableHtml)
-                            currentTextLength += 200
-                            if (currentTextLength >= 2000) {
-                                commitChapter("第 ${chapterIndex + 1} 页")
-                            }
-                        }
-                    }
-                }
-
-                // 提交最后一章
-                if (currentBuffer.isNotEmpty() || chapters.isEmpty()) {
-                    val formatted = HtmlFormatter.formatKeepImg(currentBuffer.toString().ifEmpty { "（正文结束）" })
-                    chapterContents[chapterIndex] = formatted
-                    val chapter = BookChapter().apply {
-                        this.index = chapterIndex
-                        this.bookUrl = book.bookUrl
-                        this.title = currentTitle
-                        this.url = "docx_$chapterIndex"
-                    }
-                    chapters.add(chapter)
-                }
+                chapters.add(defaultChapter)
+                chapterContents[0] = "（文档内容为空）"
             }
             isParsed = true
         } catch (t: Throwable) {
-            AppLog.put("解析 Docx 文档失败", t)
-            t.printOnDebug()
+            AppLog.put("解析 Docx 文档失败: ${t.localizedMessage}", t)
             val defaultChapter = BookChapter().apply {
                 index = 0
                 bookUrl = book.bookUrl
-                title = "正文"
+                title = "第 1 页"
                 url = "docx_0"
             }
             chapters.add(defaultChapter)
