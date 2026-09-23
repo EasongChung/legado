@@ -6,6 +6,7 @@ import android.graphics.RectF
 import android.net.Uri
 import android.util.LruCache
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import io.legado.app.constant.AppLog
@@ -63,7 +64,7 @@ object OcrDocumentHelper {
                 }
 
                 val image = InputImage.fromFilePath(context, Uri.fromFile(file))
-                val visionText = suspendCancellableCoroutine { cont ->
+                val visionText = suspendCancellableCoroutine<Text?> { cont ->
                     recognizer.process(image)
                         .addOnSuccessListener { r ->
                             cont.resume(r)
