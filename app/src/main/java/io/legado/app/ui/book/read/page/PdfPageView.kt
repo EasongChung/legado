@@ -97,10 +97,16 @@ class PdfPageView @JvmOverloads constructor(
             .pageSnap(true)
             .pageFling(true)
             .autoSpacing(true)
-            .pageFitPolicy(FitPolicy.BOTH)
+            .pageFitPolicy(FitPolicy.WIDTH)
             .fitEachPage(true)
             .enableDoubletap(true)
             .nightMode(isDark)
+            .onError { t ->
+                AppLog.put("PdfView load error: ${t.localizedMessage}", t)
+            }
+            .onPageError { page, t ->
+                AppLog.put("PdfView load page $page error: ${t.localizedMessage}", t)
+            }
             .onDraw(OnDrawListener { canvas, pageWidth, pageHeight, displayedPage ->
                 drawHighlights(canvas, pageWidth, pageHeight, displayedPage)
             })
@@ -126,34 +132,38 @@ class PdfPageView @JvmOverloads constructor(
         if (pageSentencesCache.containsKey(page)) return
 
         coroutineScope.launch(Dispatchers.IO) {
-            val pageData = PdfDocumentHelper.extractPageData(file, page)
-            var sentences = TextPositionService.buildSentences(pageData.chars, page)
-            val points = pageData.pageSize
-            val pageW = points?.width ?: 0f
-            val pageH = points?.height ?: 0f
+            try {
+                val pageData = PdfDocumentHelper.extractPageData(file, page)
+                var sentences = TextPositionService.buildSentences(pageData.chars, page)
+                val points = pageData.pageSize
+                val pageW = points?.width ?: 0f
+                val pageH = points?.height ?: 0f
 
-            // 1. 扫描版 PDF 离线 OCR 兜底：若矢量文本为空或少于 10 个字符
-            if (sentences.isEmpty() || pageData.chars.size < 10) {
-                val ocrSentences = extractOcrSentencesForPage(file, page, pageW, pageH)
-                if (ocrSentences.isNotEmpty()) {
-                    sentences = ocrSentences
+                // 1. 扫描版 PDF 离线 OCR 兜底：若矢量文本为空或少于 10 个字符
+                if (sentences.isEmpty() || pageData.chars.size < 10) {
+                    val ocrSentences = extractOcrSentencesForPage(file, page, pageW, pageH)
+                    if (ocrSentences.isNotEmpty()) {
+                        sentences = ocrSentences
+                    }
+                } else {
+                    // 2. 图文混排融合：既有矢量文本又有图片/图表
+                    val ocrSentences = extractOcrSentencesForPage(file, page, pageW, pageH)
+                    if (ocrSentences.isNotEmpty()) {
+                        sentences = mergeOcrWithVectorSentences(sentences, ocrSentences)
+                    }
                 }
-            } else {
-                // 2. 图文混排融合：既有矢量文本又有图片/图表
-                val ocrSentences = extractOcrSentencesForPage(file, page, pageW, pageH)
-                if (ocrSentences.isNotEmpty()) {
-                    sentences = mergeOcrWithVectorSentences(sentences, ocrSentences)
-                }
-            }
 
-            // 3. 视觉拓扑排序 (top 升序, left 升序)，确保第 0 句必定是页面首行
-            sentences = sortSentencesVisually(sentences)
+                // 3. 视觉拓扑排序 (top 升序, left 升序)，确保第 0 句必定是页面首行
+                sentences = sortSentencesVisually(sentences)
 
-            withContext(Dispatchers.Main) {
-                pageSentencesCache[page] = sentences
-                if (pageData.pageSize != null && pageData.pageSize.width > 0f && pageData.pageSize.height > 0f) {
-                    pagePointSizes[page] = pageData.pageSize
+                withContext(Dispatchers.Main) {
+                    pageSentencesCache[page] = sentences
+                    if (pageData.pageSize != null && pageData.pageSize.width > 0f && pageData.pageSize.height > 0f) {
+                        pagePointSizes[page] = pageData.pageSize
+                    }
                 }
+            } catch (t: Throwable) {
+                AppLog.put("loadPageSentences error on page $page: ${t.localizedMessage}", t)
             }
         }
     }
@@ -275,36 +285,42 @@ class PdfPageView @JvmOverloads constructor(
 
     /** 绘制当前页朗读高亮 */
     private fun drawHighlights(canvas: Canvas, pageWidth: Float, pageHeight: Float, displayedPage: Int) {
-        if (highlightPage != displayedPage || highlights.isEmpty()) return
-        if (!PdfViewGeometryBridge.isReady(pdfView)) return
+        try {
+            if (highlightPage != displayedPage || highlights.isEmpty()) return
+            if (!PdfViewGeometryBridge.isReady(pdfView)) return
 
-        val size = PdfViewGeometryBridge.getPageSize(pdfView, displayedPage)
-        if (size.width <= 0f || size.height <= 0f) return
+            val size = PdfViewGeometryBridge.getPageSize(pdfView, displayedPage)
+            if (size.width <= 0f || size.height <= 0f) return
 
-        val points = pagePointSizes[displayedPage]
-        val baseW = if (points != null && points.width > 0f) points.width else size.width
-        val baseH = if (points != null && points.height > 0f) points.height else size.height
-        val sx = pageWidth / baseW
-        val sy = pageHeight / baseH
+            val points = pagePointSizes[displayedPage]
+            val baseW = if (points != null && points.width > 0f) points.width else size.width
+            val baseH = if (points != null && points.height > 0f) points.height else size.height
+            if (baseW <= 0f || baseH <= 0f) return
 
-        val secondary = PdfViewGeometryBridge.getSecondaryPageOffset(pdfView, displayedPage)
-        val fixX = if (pdfView.isSwipeVertical) secondary else 0f
-        val fixY = if (pdfView.isSwipeVertical) 0f else secondary
+            val sx = pageWidth / baseW
+            val sy = pageHeight / baseH
 
-        val saved = canvas.save()
-        canvas.translate(fixX, fixY)
-        for (r in highlights) {
-            canvas.drawRoundRect(
-                r.left * sx,
-                r.top * sy,
-                r.right * sx,
-                r.bottom * sy,
-                4f * sx,
-                4f * sy,
-                highlightPaint
-            )
+            val secondary = PdfViewGeometryBridge.getSecondaryPageOffset(pdfView, displayedPage)
+            val fixX = if (pdfView.isSwipeVertical) secondary else 0f
+            val fixY = if (pdfView.isSwipeVertical) 0f else secondary
+
+            val saved = canvas.save()
+            canvas.translate(fixX, fixY)
+            for (r in highlights) {
+                canvas.drawRoundRect(
+                    r.left * sx,
+                    r.top * sy,
+                    r.right * sx,
+                    r.bottom * sy,
+                    4f * sx,
+                    4f * sy,
+                    highlightPaint
+                )
+            }
+            canvas.restoreToCount(saved)
+        } catch (t: Throwable) {
+            AppLog.put("drawHighlights failed: ${t.localizedMessage}", t)
         }
-        canvas.restoreToCount(saved)
     }
 
     /** 点击处理：三分屏手势对齐 Legado 原生阅读操作，彻底取消正文点读防误触 */

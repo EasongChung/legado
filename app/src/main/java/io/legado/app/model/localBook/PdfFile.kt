@@ -87,19 +87,28 @@ class PdfFile(var book: Book) {
      * @return
      */
     private fun readPdf(): PdfRenderer? {
-        val uri = book.getLocalUri()
-        if (uri.isContentScheme()) {
-            fileDescriptor = appCtx.contentResolver.openFileDescriptor(uri, "r")?.also {
-                pdfRenderer = PdfRenderer(it)
+        return try {
+            val uri = book.getLocalUri()
+            if (uri.isContentScheme()) {
+                fileDescriptor = appCtx.contentResolver.openFileDescriptor(uri, "r")?.also {
+                    pdfRenderer = PdfRenderer(it)
+                }
+            } else {
+                val path = uri.path ?: book.bookUrl
+                val file = File(path)
+                if (file.exists()) {
+                    fileDescriptor =
+                        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+                            ?.also {
+                                pdfRenderer = PdfRenderer(it)
+                            }
+                }
             }
-        } else {
-            fileDescriptor =
-                ParcelFileDescriptor.open(File(uri.path!!), ParcelFileDescriptor.MODE_READ_ONLY)
-                    ?.also {
-                        pdfRenderer = PdfRenderer(it)
-                    }
+            pdfRenderer
+        } catch (e: Throwable) {
+            AppLog.put("PdfFile readPdf 异常: ${e.localizedMessage}", e)
+            null
         }
-        return pdfRenderer
     }
 
     /**
@@ -107,8 +116,14 @@ class PdfFile(var book: Book) {
      *
      */
     private fun closePdf() {
-        pdfRenderer?.close()
-        fileDescriptor?.close()
+        try {
+            pdfRenderer?.close()
+        } catch (_: Throwable) {}
+        try {
+            fileDescriptor?.close()
+        } catch (_: Throwable) {}
+        pdfRenderer = null
+        fileDescriptor = null
     }
 
 
@@ -168,37 +183,33 @@ class PdfFile(var book: Book) {
 
     private fun getChapterList(): ArrayList<BookChapter> {
         val chapterList = ArrayList<BookChapter>()
-
-        pdfRenderer?.let { renderer ->
-            if (renderer.pageCount > 0) {
-                val file = try {
-                    val uri = book.getLocalUri()
-                    if (uri.isContentScheme()) {
-                        BookHelp.getLocalOrCachedFile(book)
-                    } else {
-                        File(uri.path ?: book.bookUrl)
-                    }
-                } catch (e: Exception) {
-                    null
-                }
-                val outlineMap = if (file != null && file.exists()) {
-                    PdfDocumentHelper.extractOutline(file)
-                } else emptyMap()
-
-                (0 until renderer.pageCount).forEach { pageIdx ->
+        try {
+            val count = pdfRenderer?.pageCount ?: 0
+            if (count > 0) {
+                (0 until count).forEach { pageIdx ->
                     val chapter = BookChapter()
                     chapter.index = pageIdx
                     chapter.bookUrl = book.bookUrl
-                    val bookmarkTitle = outlineMap[pageIdx]
-                    chapter.title = if (!bookmarkTitle.isNullOrBlank()) {
-                        "$bookmarkTitle (P.${pageIdx + 1})"
-                    } else {
-                        "第 ${pageIdx + 1} 页"
-                    }
+                    chapter.title = "第 ${pageIdx + 1} 页"
                     chapter.url = "pdf_page_$pageIdx"
                     chapterList.add(chapter)
                 }
+            } else {
+                val chapter = BookChapter()
+                chapter.index = 0
+                chapter.bookUrl = book.bookUrl
+                chapter.title = "第 1 页"
+                chapter.url = "pdf_page_0"
+                chapterList.add(chapter)
             }
+        } catch (e: Throwable) {
+            AppLog.put("PdfFile getChapterList 异常: ${e.localizedMessage}", e)
+            val chapter = BookChapter()
+            chapter.index = 0
+            chapter.bookUrl = book.bookUrl
+            chapter.title = "第 1 页"
+            chapter.url = "pdf_page_0"
+            chapterList.add(chapter)
         }
         return chapterList
     }
