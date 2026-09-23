@@ -1084,7 +1084,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         binding.documentContainer.visibility = View.VISIBLE
         val isDark = AppConfig.isNightTheme
         val bgColor = if (isDark) Color.parseColor("#121212") else {
-            ReadBookConfig.durConfig.bgMeanColor.takeIf { it != 0 } ?: Color.parseColor("#F5F2E9")
+            ReadBookConfig.bgMeanColor.takeIf { it != 0 } ?: Color.parseColor("#F5F2E9")
         }
         binding.documentContainer.setBackgroundColor(bgColor)
         upDocumentContainerPadding()
@@ -1990,7 +1990,6 @@ class ReadBookActivity : BaseReadBookActivity(),
         releaseDocWakeLock()
         stopDocTimer()
         pdfPageView?.clearHighlights()
-        docxPageView?.destroy()
         imagePageView?.clearHighlights()
         tts?.clearTts()
         textActionMenu.dismiss()

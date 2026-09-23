@@ -85,7 +85,7 @@ class PdfPageView @JvmOverloads constructor(
 
         val isDark = AppConfig.isNightTheme
         val bgColor = if (isDark) Color.parseColor("#121212") else {
-            ReadBookConfig.durConfig.bgMeanColor.takeIf { it != 0 } ?: Color.parseColor("#F5F2E9")
+            ReadBookConfig.bgMeanColor.takeIf { it != 0 } ?: Color.parseColor("#F5F2E9")
         }
         setBackgroundColor(bgColor)
         pdfView.setBackgroundColor(bgColor)

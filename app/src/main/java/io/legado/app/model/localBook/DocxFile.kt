@@ -506,6 +506,6 @@ class DocxFile(var book: Book) {
         }
         return null
     }
-
-    private const val NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 }
+
+private const val NS_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
