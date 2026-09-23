@@ -2113,6 +2113,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         releaseDocWakeLock()
         stopDocTimer()
         pdfPageView?.clearHighlights()
+        pdfPageView?.destroy()
         docxPageView?.destroy()
         imagePageView?.clearHighlights()
         tts?.clearTts()

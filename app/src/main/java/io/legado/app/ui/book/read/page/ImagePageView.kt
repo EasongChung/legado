@@ -71,9 +71,12 @@ class ImagePageView @JvmOverloads constructor(
 
     // 手势检测
     private val gestureDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: MotionEvent): Boolean = true
+
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             return handleTap(e.x, e.y)
         }
+
 
         override fun onFling(
             e1: MotionEvent?,
@@ -147,13 +150,19 @@ class ImagePageView @JvmOverloads constructor(
         val h = height.toFloat()
         if (w <= 0 || h <= 0) return false
 
-        // 1. 中心区域判断（呼出/收起控制栏）
+        // 1. 三分屏区域判断（中心呼出控制栏，两侧单页翻页）
         val cx1 = w * 0.3f
         val cx2 = w * 0.7f
         val cy1 = h * 0.3f
         val cy2 = h * 0.7f
         if (x in cx1..cx2 && y in cy1..cy2) {
             onCenterClickListener?.invoke()
+            return true
+        } else if (x < cx1) {
+            onPageTurnListener?.invoke(false)
+            return true
+        } else if (x > cx2) {
+            onPageTurnListener?.invoke(true)
             return true
         }
 

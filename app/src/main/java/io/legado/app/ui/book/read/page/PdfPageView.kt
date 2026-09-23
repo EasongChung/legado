@@ -12,6 +12,7 @@ import android.widget.FrameLayout
 import com.github.barteksc.pdfviewer.PDFView
 import com.github.barteksc.pdfviewer.PdfViewGeometryBridge
 import com.github.barteksc.pdfviewer.listener.OnDrawListener
+import com.github.barteksc.pdfviewer.listener.OnLoadCompleteListener
 import com.github.barteksc.pdfviewer.listener.OnPageChangeListener
 import com.github.barteksc.pdfviewer.listener.OnTapListener
 import com.github.barteksc.pdfviewer.util.FitPolicy
@@ -77,7 +78,24 @@ class PdfPageView @JvmOverloads constructor(
         PdfDocumentHelper.init(context)
     }
 
+    private var isFileLoaded = false
+    private var isFileLoading = false
+    private var loadedFilePath: String? = null
+
     fun openFile(file: File, initialPage: Int = 0) {
+        if (!file.exists()) return
+
+        // 状态防抖：同一个文件如果正在加载或已加载完成，仅跳转目标页，绝不重复触发底层 Native load()
+        if (loadedFilePath == file.absolutePath && (isFileLoaded || isFileLoading)) {
+            if (currentPage != initialPage) {
+                jumpTo(initialPage)
+            }
+            return
+        }
+
+        this.loadedFilePath = file.absolutePath
+        this.isFileLoading = true
+        this.isFileLoaded = false
         this.pdfFile = file
         this.currentPage = initialPage
         pageSentencesCache.clear()
@@ -102,7 +120,13 @@ class PdfPageView @JvmOverloads constructor(
             .fitEachPage(true)
             .enableDoubletap(true)
             .nightMode(isDark)
+            .onLoad(OnLoadCompleteListener { _ ->
+                isFileLoading = false
+                isFileLoaded = true
+            })
             .onError { t ->
+                isFileLoading = false
+                isFileLoaded = false
                 AppLog.put("PdfView load error: ${t.localizedMessage}", t)
             }
             .onPageError { page, t ->
@@ -407,11 +431,25 @@ class PdfPageView @JvmOverloads constructor(
 
     /** 跳转到指定页（0-indexed） */
     fun jumpTo(page: Int) {
-        if (!PdfViewGeometryBridge.isReady(pdfView)) return
+        if (!PdfViewGeometryBridge.isReady(pdfView)) {
+            currentPage = page
+            return
+        }
         val targetPage = page.coerceIn(0, (pdfView.pageCount - 1).coerceAtLeast(0))
         currentPage = targetPage
         pdfView.jumpTo(targetPage, true)
         loadPageSentences(targetPage)
+    }
+
+    /** 安全销毁并释放引用，避免生命周期并发冲突 */
+    fun destroy() {
+        try {
+            coroutineScope.coroutineContext[Job]?.cancel()
+            loadedFilePath = null
+            isFileLoaded = false
+            isFileLoading = false
+            pdfView.recycle()
+        } catch (_: Throwable) {}
     }
 }
 

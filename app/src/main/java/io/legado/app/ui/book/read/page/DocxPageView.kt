@@ -76,6 +76,11 @@ class DocxPageView @JvmOverloads constructor(
         webView.isVerticalScrollBarEnabled = false
         webView.isHorizontalScrollBarEnabled = false
 
+        settings.allowFileAccess = true
+        settings.allowContentAccess = true
+        settings.allowFileAccessFromFileURLs = true
+        settings.allowUniversalAccessFromFileURLs = true
+
         applyThemeColor()
 
         webView.webChromeClient = object : WebChromeClient() {

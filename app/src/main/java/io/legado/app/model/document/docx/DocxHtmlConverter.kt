@@ -1,9 +1,10 @@
 package io.legado.app.model.document.docx
 
-import android.util.Base64
 import org.w3c.dom.Element
 import org.w3c.dom.Node
+import splitties.init.appCtx
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -32,7 +33,7 @@ data class DocxResult(
  * Word (.docx) -> HTML 转换器（单页原文流式排版与精准高亮朗读增强）。
  *
  * 将 .docx 还原为内联样式的轻量 HTML，用于单页原文渲染。
- * 覆盖：段落对齐/首行缩进/行距、加粗/斜体/下划线/字号/颜色、图片（base64）、表格。
+ * 覆盖：段落对齐/首行缩进/行距、加粗/斜体/下划线/字号/颜色、本地文件图片、表格。
  */
 object DocxHtmlConverter {
 
@@ -49,18 +50,25 @@ object DocxHtmlConverter {
 
         val zip = ZipFile(file)
         try {
-            // 1. 扫描图片资源: word/media/* -> base64
+            // 1. 扫描图片资源: word/media/* -> 缓存至本地磁盘，使用 file:// URI，彻底杜绝 Base64 造成的 OOM
             val mediaMap = mutableMapOf<String, String>()
+            val cacheFolder = File(appCtx.cacheDir, "docx_media/${file.nameWithoutExtension}").apply { mkdirs() }
             val entries = zip.entries()
             while (entries.hasMoreElements()) {
                 val entry = entries.nextElement()
                 if (entry.name.startsWith("word/media/")) {
                     val name = entry.name.substring("word/media/".length)
-                    val bytes = zip.getInputStream(entry).readBytes()
-                    if (bytes.isNotEmpty()) {
-                        val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                        mediaMap[name] = base64
+                    val targetFile = File(cacheFolder, name)
+                    if (!targetFile.exists() || targetFile.length() == 0L) {
+                        try {
+                            zip.getInputStream(entry).use { inStream ->
+                                FileOutputStream(targetFile).use { outStream ->
+                                    inStream.copyTo(outStream)
+                                }
+                            }
+                        } catch (_: Throwable) {}
                     }
+                    mediaMap[name] = targetFile.toURI().toString()
                 }
             }
 
@@ -476,18 +484,18 @@ object DocxHtmlConverter {
             if (rId.isNotEmpty()) {
                 val numMatch = Regex("""(\d+)$""").find(rId)
                 val num = numMatch?.groupValues?.get(1)
-                var base64: String? = null
+                var fileUri: String? = null
                 if (num != null) {
                     val entry = mediaMap.entries.firstOrNull {
                         it.key.contains("$num.") || it.key.startsWith("image$num")
                     }
-                    if (entry != null) base64 = entry.value
+                    if (entry != null) fileUri = entry.value
                 }
-                if (base64 == null && mediaMap.isNotEmpty()) {
-                    base64 = mediaMap.values.first()
+                if (fileUri == null && mediaMap.isNotEmpty()) {
+                    fileUri = mediaMap.values.first()
                 }
-                if (base64 != null) {
-                    return "<img src=\"data:image/png;base64,$base64\" />"
+                if (fileUri != null) {
+                    return "<img src=\"$fileUri\" />"
                 }
             }
         }
