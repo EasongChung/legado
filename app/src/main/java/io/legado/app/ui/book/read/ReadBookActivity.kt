@@ -56,7 +56,6 @@ import io.legado.app.ui.book.read.page.PdfPageView
 import io.legado.app.ui.book.read.page.DocxPageView
 import io.legado.app.ui.book.read.page.ImagePageView
 import io.legado.app.model.document.pdf.SentenceBox
-import io.legado.app.lib.theme.ThemeStore
 import android.graphics.Color
 import java.io.File
 import io.legado.app.help.book.update
@@ -1092,7 +1091,7 @@ class ReadBookActivity : BaseReadBookActivity(),
 
         binding.readView.visibility = View.GONE
         binding.documentContainer.visibility = View.VISIBLE
-        val isDark = AppConfig.isNightTheme || ThemeStore.isDark(this)
+        val isDark = AppConfig.isNightTheme
         val bgColor = if (isDark) Color.parseColor("#121212") else Color.WHITE
         binding.documentContainer.setBackgroundColor(bgColor)
         upDocumentContainerPadding()

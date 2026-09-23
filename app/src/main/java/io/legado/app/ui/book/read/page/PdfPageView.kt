@@ -53,7 +53,8 @@ class PdfPageView @JvmOverloads constructor(
     private val pagePointSizes = mutableMapOf<Int, SizeF>()
 
     private var currentPage: Int = 0
-    private var currentSentenceIndex: Int = -1
+    var currentSentenceIndex: Int = -1
+        private set
     private val highlights = mutableListOf<RectF>()
     private var highlightPage: Int = -1
 
