@@ -13,6 +13,7 @@ import io.legado.app.base.BaseDialogFragment
 import io.legado.app.constant.EventBus
 import io.legado.app.databinding.DialogReadAloudBinding
 import io.legado.app.help.book.isDocx
+import io.legado.app.help.book.isImage
 import io.legado.app.help.book.isPdf
 import io.legado.app.help.config.AppConfig
 import io.legado.app.lib.dialogs.selector
@@ -90,7 +91,7 @@ class ReadAloudDialog : BaseDialogFragment(R.layout.dialog_read_aloud) {
     private fun initData() = binding.run {
         upPlayState()
         upTimerText(BaseReadAloudService.timeMinute)
-        val isDoc = (activity as? ReadBookActivity)?.let { it.isDocReadingAloud || ReadBook.book?.isPdf == true || ReadBook.book?.isDocx == true } ?: false
+        val isDoc = (activity as? ReadBookActivity)?.let { it.isDocReadingAloud || ReadBook.book?.isPdf == true || ReadBook.book?.isDocx == true || ReadBook.book?.isImage == true } ?: false
         val followSys = if (isDoc) false else requireContext().getPrefBoolean("ttsFollowSys", true)
         cbTtsFollowSys.isChecked = followSys
         upTtsSpeechRateEnabled(!followSys)

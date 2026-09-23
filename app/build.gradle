@@ -293,4 +293,8 @@ dependencies {
     // [Phase 3] PDF 原文渲染与字符坐标提取
     implementation(libs.pdfbox.android)
     implementation(libs.android.pdf.viewer)
+
+    // [Image OCR] 离线中文 OCR 识别（Bundled 离线模型，无 GMS 依赖）
+    implementation(libs.mlkit.text.chinese)
 }
+

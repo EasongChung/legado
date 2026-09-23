@@ -48,11 +48,12 @@ import io.legado.app.help.book.isDocx
 import io.legado.app.help.book.isEpub
 import io.legado.app.help.book.isLocal
 import io.legado.app.help.book.isLocalTxt
-import io.legado.app.help.book.isMobi
+import io.legado.app.help.book.isImage
 import io.legado.app.help.book.isPdf
 import io.legado.app.help.book.removeType
 import io.legado.app.ui.book.read.page.PdfPageView
 import io.legado.app.ui.book.read.page.DocxPageView
+import io.legado.app.ui.book.read.page.ImagePageView
 import io.legado.app.model.document.pdf.SentenceBox
 import java.io.File
 import io.legado.app.help.book.update
@@ -180,6 +181,12 @@ class ReadBookActivity : BaseReadBookActivity(),
                     upSeekBarProgress()
                     return@registerForActivityResult
                 }
+                if (book != null && isImageBook(book)) {
+                    ReadBook.durChapterIndex = it.first
+                    ReadBook.loadContent(resetPageOffset = true)
+                    upSeekBarProgress()
+                    return@registerForActivityResult
+                }
                 viewModel.openChapter(it.first, it.second)
             }
         }
@@ -237,7 +244,13 @@ class ReadBookActivity : BaseReadBookActivity(),
     private var tts: TTS? = null
     private var pdfPageView: PdfPageView? = null
     private var docxPageView: DocxPageView? = null
+    private var imagePageView: ImagePageView? = null
     internal var isDocReadingAloud = false
+
+    private fun isImageBook(book: Book?): Boolean {
+        if (book == null) return false
+        return book.isImage || book.originName.matches(Regex(".*\\.(jpg|jpeg|png|webp|bmp)$", RegexOption.IGNORE_CASE))
+    }
     private var docSentenceIndex = 0
     private var docWakeLock: android.os.PowerManager.WakeLock? = null
     private var docTimerJob: Job? = null
@@ -1066,8 +1079,9 @@ class ReadBookActivity : BaseReadBookActivity(),
         val book = ReadBook.book ?: return
         val isPdf = book.isPdf
         val isDocx = book.isDocx
+        val isImage = isImageBook(book)
 
-        if (!isPdf && !isDocx) {
+        if (!isPdf && !isDocx && !isImage) {
             binding.documentContainer.visibility = View.GONE
             binding.readView.visibility = View.VISIBLE
             return
@@ -1089,6 +1103,7 @@ class ReadBookActivity : BaseReadBookActivity(),
 
         if (isPdf) {
             docxPageView?.visibility = View.GONE
+            imagePageView?.visibility = View.GONE
             if (pdfPageView == null) {
                 pdfPageView = PdfPageView(this).apply {
                     onCenterClickListener = { showActionMenu() }
@@ -1111,6 +1126,7 @@ class ReadBookActivity : BaseReadBookActivity(),
             pdfPageView?.openFile(file, ReadBook.durChapterIndex)
         } else if (isDocx) {
             pdfPageView?.visibility = View.GONE
+            imagePageView?.visibility = View.GONE
             if (docxPageView == null) {
                 docxPageView = DocxPageView(this).apply {
                     onCenterClickListener = { showActionMenu() }
@@ -1129,7 +1145,34 @@ class ReadBookActivity : BaseReadBookActivity(),
             }
             docxPageView?.visibility = View.VISIBLE
             docxPageView?.openFile(file)
+        } else if (isImage) {
+            pdfPageView?.visibility = View.GONE
+            docxPageView?.visibility = View.GONE
+            if (imagePageView == null) {
+                imagePageView = ImagePageView(this).apply {
+                    onCenterClickListener = { showActionMenu() }
+                    onSentenceClickListener = { sentence, index ->
+                        docSentenceIndex = index
+                        speakDocumentSentence(sentence.text)
+                    }
+                    onPageTurnListener = { isNext ->
+                        if (isNext) {
+                            ReadBook.moveToNextChapter(true)
+                        } else {
+                            ReadBook.moveToPrevChapter(upContent = true, toLast = false)
+                        }
+                    }
+                }
+                binding.documentContainer.addView(
+                    imagePageView,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            }
+            imagePageView?.visibility = View.VISIBLE
+            imagePageView?.openFile(file, ReadBook.durChapterIndex)
         }
+
     }
 
     private fun acquireDocWakeLock() {
@@ -1229,6 +1272,52 @@ class ReadBookActivity : BaseReadBookActivity(),
                 startDocTimer()
             }
             readNextDocxSentence()
+        } else if (isImageBook(book)) {
+            val imgView = imagePageView ?: return
+            val sentences = imgView.getSentences()
+            if (sentences.isEmpty()) {
+                toastOnUi("当前图片未提取到朗读文本（OCR识别中或无文字）")
+                return
+            }
+            if (docSentenceIndex !in sentences.indices) {
+                docSentenceIndex = if (imgView.currentSentenceIndex in sentences.indices) imgView.currentSentenceIndex else 0
+            }
+            isDocReadingAloud = true
+            acquireDocWakeLock()
+            postEvent(EventBus.ALOUD_STATE, Status.PLAY)
+            showReadAloudDialog()
+            if (AppConfig.ttsTimer > 0) {
+                docTimerMinute = AppConfig.ttsTimer
+                startDocTimer()
+            }
+            readNextImageSentence()
+        }
+    }
+
+    private fun readNextImageSentence() {
+        val imgView = imagePageView ?: return
+        if (!isDocReadingAloud) return
+        val sentences = imgView.getSentences()
+        if (docSentenceIndex in sentences.indices) {
+            val sentence = sentences[docSentenceIndex]
+            imgView.highlightSentenceIndex(docSentenceIndex)
+            speakTtsWithCallback(sentence.text) {
+                docSentenceIndex++
+                runOnUiThread {
+                    readNextImageSentence()
+                }
+            }
+        } else {
+            docSentenceIndex = 0
+            if (ReadBook.durChapterIndex < ReadBook.chapterSize - 1) {
+                ReadBook.moveToNextChapter(true)
+                handler.postDelayed({
+                    readNextImageSentence()
+                }, 1000)
+            } else {
+                stopDocumentReadAloud()
+                toastOnUi("图片朗读完毕")
+            }
         }
     }
 
@@ -1311,6 +1400,20 @@ class ReadBookActivity : BaseReadBookActivity(),
                 docSentenceIndex--
             }
             readNextDocxSentence()
+        } else if (isImageBook(book)) {
+            val imgView = imagePageView ?: return
+            val sentences = imgView.getSentences()
+            if (docSentenceIndex > 0) {
+                docSentenceIndex--
+                readNextImageSentence()
+            } else {
+                ReadBook.moveToPrevChapter(upContent = true, toLast = false)
+                handler.postDelayed({
+                    val newSentences = imgView.getSentences()
+                    docSentenceIndex = (newSentences.size - 1).coerceAtLeast(0)
+                    readNextImageSentence()
+                }, 1000)
+            }
         }
     }
 
@@ -1332,8 +1435,22 @@ class ReadBookActivity : BaseReadBookActivity(),
         } else if (book.isDocx) {
             docSentenceIndex++
             readNextDocxSentence()
+        } else if (isImageBook(book)) {
+            val imgView = imagePageView ?: return
+            val sentences = imgView.getSentences()
+            if (docSentenceIndex < sentences.size - 1) {
+                docSentenceIndex++
+                readNextImageSentence()
+            } else {
+                docSentenceIndex = 0
+                ReadBook.moveToNextChapter(true)
+                handler.postDelayed({
+                    readNextImageSentence()
+                }, 1000)
+            }
         }
     }
+
 
 
     override fun upPageAnim(upRecorder: Boolean) {
@@ -1635,7 +1752,7 @@ class ReadBookActivity : BaseReadBookActivity(),
     override fun onClickReadAloud() {
         autoPageStop()
         val book = ReadBook.book
-        if (book?.isPdf == true || book?.isDocx == true) {
+        if (book?.isPdf == true || book?.isDocx == true || isImageBook(book)) {
             if (isDocReadingAloud) {
                 isDocReadingAloud = false
                 tts?.stop()
@@ -1940,6 +2057,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         stopDocTimer()
         pdfPageView?.clearHighlights()
         docxPageView?.destroy()
+        imagePageView?.clearHighlights()
         tts?.clearTts()
         textActionMenu.dismiss()
         popupAction.dismiss()

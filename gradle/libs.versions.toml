@@ -30,6 +30,7 @@ splitties = "3.0.0"
 desugar = "2.1.5"
 pdfbox = "2.0.27.0"
 androidPdfViewer = "3.2.0-beta05"
+mlkitTextChinese = "16.0.0"
 
 #kotlinxSerialization = "1.8.0"
 swiperefreshlayout = "1.2.0"
@@ -189,6 +190,7 @@ renderscript-intrinsics-replacement-toolkit = { module = "com.github.TomasValent
 zxing-lite = { module = "com.github.jenly1314:zxing-lite", version.ref = "zxingLite" }
 pdfbox-android = { module = "com.tom-roush:pdfbox-android", version.ref = "pdfbox" }
 android-pdf-viewer = { module = "io.github.oothp:android-pdf-viewer", version.ref = "androidPdfViewer" }
+mlkit-text-chinese = { module = "com.google.mlkit:text-recognition-chinese", version.ref = "mlkitTextChinese" }
 
 [bundles]
 coroutines = ["kotlinx-coroutines-core", "kotlinx-coroutines-android"]
