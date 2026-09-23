@@ -175,6 +175,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                     pdfPageView?.jumpTo(it.first)
                     upSeekBarProgress()
                     return@registerForActivityResult
+                }
                 if (book != null && isImageBook(book)) {
                     ReadBook.durChapterIndex = it.first
                     ReadBook.loadContent(resetPageOffset = true)
