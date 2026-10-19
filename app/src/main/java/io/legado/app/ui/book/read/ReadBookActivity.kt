@@ -56,6 +56,7 @@ import io.legado.app.ui.book.read.page.PdfPageView
 import io.legado.app.ui.book.read.page.DocxPageView
 import io.legado.app.ui.book.read.page.ImagePageView
 import io.legado.app.model.document.pdf.SentenceBox
+import io.legado.app.model.document.matcher.SentenceMatcher
 import android.graphics.Color
 import java.io.File
 import io.legado.app.help.book.update
@@ -254,6 +255,9 @@ class ReadBookActivity : BaseReadBookActivity(),
         return book.isImage || book.originName.matches(Regex(".*\\.(jpg|jpeg|png|webp|bmp)$", RegexOption.IGNORE_CASE))
     }
     private var docSentenceIndex = 0
+    private var lastMatchedPdfSentenceIndex = -1
+    private var lastMatchedDocxSentenceIndex = -1
+    private var lastMatchedImageSentenceIndex = -1
     private var docWakeLock: android.os.PowerManager.WakeLock? = null
     private var docTimerJob: Job? = null
     private var docTimerMinute: Int = 0
@@ -1130,6 +1134,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                     onPageChangedListener = { page, total ->
                         ReadBook.durChapterIndex = page
                         docSentenceIndex = 0
+                        lastMatchedDocxSentenceIndex = -1
                         upSeekBarProgress()
                     }
                 }
@@ -1150,6 +1155,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                     onPageChangedListener = { page, total ->
                         ReadBook.durChapterIndex = page
                         docSentenceIndex = 0
+                        lastMatchedPdfSentenceIndex = -1
                         upSeekBarProgress()
                     }
                 }
@@ -1169,6 +1175,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                     onCenterClickListener = { showActionMenu() }
                     onSentenceClickListener = { sentence, index ->
                         docSentenceIndex = index
+                        lastMatchedImageSentenceIndex = index
                         speakDocumentSentence(sentence.text)
                     }
                     onPageTurnListener = { isNext ->
@@ -1234,6 +1241,9 @@ class ReadBookActivity : BaseReadBookActivity(),
         tts?.stop()
         releaseDocWakeLock()
         stopDocTimer()
+        lastMatchedPdfSentenceIndex = -1
+        lastMatchedDocxSentenceIndex = -1
+        lastMatchedImageSentenceIndex = -1
         postEvent(EventBus.ALOUD_STATE, Status.STOP)
     }
 
@@ -1259,6 +1269,16 @@ class ReadBookActivity : BaseReadBookActivity(),
             if (pdf.currentSentenceIndex !in sentences.indices || docSentenceIndex !in sentences.indices) {
                 docSentenceIndex = 0
             }
+            if (docSentenceIndex > 0) {
+                lastMatchedPdfSentenceIndex = SentenceMatcher.fastForwardCursor(
+                    candidates = sentences,
+                    textOf = { it.text },
+                    targetSentences = sentences.map { it.text },
+                    start = docSentenceIndex
+                )
+            } else {
+                lastMatchedPdfSentenceIndex = -1
+            }
             isDocReadingAloud = true
             acquireDocWakeLock()
             postEvent(EventBus.ALOUD_STATE, Status.PLAY)
@@ -1277,6 +1297,16 @@ class ReadBookActivity : BaseReadBookActivity(),
             }
             if (docSentenceIndex !in sentences.indices) {
                 docSentenceIndex = 0
+            }
+            if (docSentenceIndex > 0) {
+                lastMatchedDocxSentenceIndex = SentenceMatcher.fastForwardCursor(
+                    candidates = sentences,
+                    textOf = { it },
+                    targetSentences = sentences,
+                    start = docSentenceIndex
+                )
+            } else {
+                lastMatchedDocxSentenceIndex = -1
             }
             isDocReadingAloud = true
             acquireDocWakeLock()
@@ -1297,6 +1327,16 @@ class ReadBookActivity : BaseReadBookActivity(),
             if (docSentenceIndex !in sentences.indices) {
                 docSentenceIndex = if (imgView.currentSentenceIndex in sentences.indices) imgView.currentSentenceIndex else 0
             }
+            if (docSentenceIndex > 0) {
+                lastMatchedImageSentenceIndex = SentenceMatcher.fastForwardCursor(
+                    candidates = sentences,
+                    textOf = { it.text },
+                    targetSentences = sentences.map { it.text },
+                    start = docSentenceIndex
+                )
+            } else {
+                lastMatchedImageSentenceIndex = -1
+            }
             isDocReadingAloud = true
             acquireDocWakeLock()
             postEvent(EventBus.ALOUD_STATE, Status.PLAY)
@@ -1315,7 +1355,18 @@ class ReadBookActivity : BaseReadBookActivity(),
         val sentences = docx.getCurrentSentences()
         if (docSentenceIndex < sentences.size) {
             val sentenceText = sentences[docSentenceIndex]
-            docx.highlightIndex(docSentenceIndex)
+            val matchedIndex = SentenceMatcher.matchSentenceIndex(
+                candidates = sentences,
+                textOf = { it },
+                targetText = sentenceText,
+                lastMatchedIndex = lastMatchedDocxSentenceIndex
+            )
+            if (matchedIndex != -1) {
+                lastMatchedDocxSentenceIndex = matchedIndex
+                docx.highlightIndex(matchedIndex)
+            } else {
+                docx.highlightIndex(-1)
+            }
             speakTtsWithCallback(sentenceText) {
                 docSentenceIndex++
                 runOnUiThread {
@@ -1324,6 +1375,7 @@ class ReadBookActivity : BaseReadBookActivity(),
             }
         } else {
             docSentenceIndex = 0
+            lastMatchedDocxSentenceIndex = -1
             if (ReadBook.durChapterIndex < ReadBook.chapterSize - 1) {
                 ReadBook.moveToNextChapter(true)
                 docx.loadPage(ReadBook.durChapterIndex)
@@ -1343,7 +1395,18 @@ class ReadBookActivity : BaseReadBookActivity(),
         val sentences = imgView.getSentences()
         if (docSentenceIndex in sentences.indices) {
             val sentence = sentences[docSentenceIndex]
-            imgView.highlightSentenceIndex(docSentenceIndex)
+            val matchedIndex = SentenceMatcher.matchSentenceIndex(
+                candidates = sentences,
+                textOf = { it.text },
+                targetText = sentence.text,
+                lastMatchedIndex = lastMatchedImageSentenceIndex
+            )
+            if (matchedIndex != -1) {
+                lastMatchedImageSentenceIndex = matchedIndex
+                imgView.highlightSentenceIndex(matchedIndex)
+            } else {
+                imgView.clearHighlights()
+            }
             speakTtsWithCallback(sentence.text) {
                 docSentenceIndex++
                 runOnUiThread {
@@ -1352,6 +1415,7 @@ class ReadBookActivity : BaseReadBookActivity(),
             }
         } else {
             docSentenceIndex = 0
+            lastMatchedImageSentenceIndex = -1
             if (ReadBook.durChapterIndex < ReadBook.chapterSize - 1) {
                 ReadBook.moveToNextChapter(true)
                 handler.postDelayed({
@@ -1370,7 +1434,18 @@ class ReadBookActivity : BaseReadBookActivity(),
         val sentences = pdf.getCurrentPageSentences()
         if (docSentenceIndex < sentences.size) {
             val sentence = sentences[docSentenceIndex]
-            pdf.highlightSentenceIndex(docSentenceIndex)
+            val matchedIndex = SentenceMatcher.matchSentenceIndex(
+                candidates = sentences,
+                textOf = { it.text },
+                targetText = sentence.text,
+                lastMatchedIndex = lastMatchedPdfSentenceIndex
+            )
+            if (matchedIndex != -1) {
+                lastMatchedPdfSentenceIndex = matchedIndex
+                pdf.highlightSentenceIndex(matchedIndex)
+            } else {
+                pdf.clearHighlights()
+            }
             speakTtsWithCallback(sentence.text) {
                 docSentenceIndex++
                 runOnUiThread {
@@ -1380,6 +1455,7 @@ class ReadBookActivity : BaseReadBookActivity(),
         } else {
             // 当前页读完，翻页并继续下一页
             docSentenceIndex = 0
+            lastMatchedPdfSentenceIndex = -1
             pdf.nextPage()
             handler.postDelayed({
                 readNextPdfSentence()
@@ -1410,12 +1486,14 @@ class ReadBookActivity : BaseReadBookActivity(),
             val sentences = pdf.getCurrentPageSentences()
             if (docSentenceIndex > 0) {
                 docSentenceIndex--
+                lastMatchedPdfSentenceIndex = docSentenceIndex - 1
                 readNextPdfSentence()
             } else {
                 pdf.prevPage()
                 handler.postDelayed({
                     val newSentences = pdf.getCurrentPageSentences()
                     docSentenceIndex = (newSentences.size - 1).coerceAtLeast(0)
+                    lastMatchedPdfSentenceIndex = docSentenceIndex - 1
                     readNextPdfSentence()
                 }, 600)
             }
@@ -1424,6 +1502,7 @@ class ReadBookActivity : BaseReadBookActivity(),
             val sentences = docx.getCurrentSentences()
             if (docSentenceIndex > 0) {
                 docSentenceIndex--
+                lastMatchedDocxSentenceIndex = docSentenceIndex - 1
                 readNextDocxSentence()
             } else {
                 if (ReadBook.durChapterIndex > 0) {
@@ -1432,6 +1511,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                     handler.postDelayed({
                         val newSentences = docx.getCurrentSentences()
                         docSentenceIndex = (newSentences.size - 1).coerceAtLeast(0)
+                        lastMatchedDocxSentenceIndex = docSentenceIndex - 1
                         readNextDocxSentence()
                     }, 600)
                 }
@@ -1441,12 +1521,14 @@ class ReadBookActivity : BaseReadBookActivity(),
             val sentences = imgView.getSentences()
             if (docSentenceIndex > 0) {
                 docSentenceIndex--
+                lastMatchedImageSentenceIndex = docSentenceIndex - 1
                 readNextImageSentence()
             } else {
                 ReadBook.moveToPrevChapter(upContent = true, toLast = false)
                 handler.postDelayed({
                     val newSentences = imgView.getSentences()
                     docSentenceIndex = (newSentences.size - 1).coerceAtLeast(0)
+                    lastMatchedImageSentenceIndex = docSentenceIndex - 1
                     readNextImageSentence()
                 }, 1000)
             }
@@ -1463,6 +1545,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 readNextPdfSentence()
             } else {
                 docSentenceIndex = 0
+                lastMatchedPdfSentenceIndex = -1
                 pdf.nextPage()
                 handler.postDelayed({
                     readNextPdfSentence()
@@ -1476,6 +1559,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 readNextDocxSentence()
             } else {
                 docSentenceIndex = 0
+                lastMatchedDocxSentenceIndex = -1
                 if (ReadBook.durChapterIndex < ReadBook.chapterSize - 1) {
                     ReadBook.moveToNextChapter(true)
                     docx.loadPage(ReadBook.durChapterIndex)
@@ -1492,6 +1576,7 @@ class ReadBookActivity : BaseReadBookActivity(),
                 readNextImageSentence()
             } else {
                 docSentenceIndex = 0
+                lastMatchedImageSentenceIndex = -1
                 ReadBook.moveToNextChapter(true)
                 handler.postDelayed({
                     readNextImageSentence()
