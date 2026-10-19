@@ -54,7 +54,6 @@ import io.legado.app.help.book.isPdf
 import io.legado.app.help.book.removeType
 import io.legado.app.ui.book.read.page.PdfPageView
 import io.legado.app.ui.book.read.page.DocxPageView
-import io.legado.app.ui.book.read.page.ImagePageView
 import io.legado.app.model.document.pdf.SentenceBox
 import io.legado.app.model.document.matcher.SentenceMatcher
 import android.graphics.Color
@@ -184,12 +183,6 @@ class ReadBookActivity : BaseReadBookActivity(),
                     upSeekBarProgress()
                     return@registerForActivityResult
                 }
-                if (book != null && isImageBook(book)) {
-                    ReadBook.durChapterIndex = it.first
-                    ReadBook.loadContent(resetPageOffset = true)
-                    upSeekBarProgress()
-                    return@registerForActivityResult
-                }
                 viewModel.openChapter(it.first, it.second)
             }
         }
@@ -247,17 +240,11 @@ class ReadBookActivity : BaseReadBookActivity(),
     private var tts: TTS? = null
     private var pdfPageView: PdfPageView? = null
     private var docxPageView: DocxPageView? = null
-    private var imagePageView: ImagePageView? = null
     internal var isDocReadingAloud = false
 
-    private fun isImageBook(book: Book?): Boolean {
-        if (book == null) return false
-        return book.isImage || book.originName.matches(Regex(".*\\.(jpg|jpeg|png|webp|bmp)$", RegexOption.IGNORE_CASE))
-    }
     private var docSentenceIndex = 0
     private var lastMatchedPdfSentenceIndex = -1
     private var lastMatchedDocxSentenceIndex = -1
-    private var lastMatchedImageSentenceIndex = -1
     private var docWakeLock: android.os.PowerManager.WakeLock? = null
     private var docTimerJob: Job? = null
     private var docTimerMinute: Int = 0
@@ -1085,9 +1072,8 @@ class ReadBookActivity : BaseReadBookActivity(),
         val book = ReadBook.book ?: return
         val isPdf = book.isPdf
         val isWord = book.isDocx
-        val isImage = isImageBook(book)
 
-        if (!isPdf && !isImage && !isWord) {
+        if (!isPdf && !isWord) {
             binding.documentContainer.visibility = View.GONE
             binding.readView.visibility = View.VISIBLE
             return
@@ -1114,7 +1100,6 @@ class ReadBookActivity : BaseReadBookActivity(),
 
         if (isWord) {
             pdfPageView?.visibility = View.GONE
-            imagePageView?.visibility = View.GONE
             if (docxPageView == null) {
                 docxPageView = DocxPageView(this).apply {
                     onCenterClickListener = { showActionMenu() }
@@ -1148,7 +1133,6 @@ class ReadBookActivity : BaseReadBookActivity(),
             docxPageView?.openFile(file, ReadBook.durChapterIndex)
         } else if (isPdf) {
             docxPageView?.visibility = View.GONE
-            imagePageView?.visibility = View.GONE
             if (pdfPageView == null) {
                 pdfPageView = PdfPageView(this).apply {
                     onCenterClickListener = { showActionMenu() }
@@ -1167,33 +1151,6 @@ class ReadBookActivity : BaseReadBookActivity(),
             }
             pdfPageView?.visibility = View.VISIBLE
             pdfPageView?.openFile(file, ReadBook.durChapterIndex)
-        } else if (isImage) {
-            pdfPageView?.visibility = View.GONE
-            docxPageView?.visibility = View.GONE
-            if (imagePageView == null) {
-                imagePageView = ImagePageView(this).apply {
-                    onCenterClickListener = { showActionMenu() }
-                    onSentenceClickListener = { sentence, index ->
-                        docSentenceIndex = index
-                        lastMatchedImageSentenceIndex = index
-                        speakDocumentSentence(sentence.text)
-                    }
-                    onPageTurnListener = { isNext ->
-                        if (isNext) {
-                            ReadBook.moveToNextChapter(true)
-                        } else {
-                            ReadBook.moveToPrevChapter(upContent = true, toLast = false)
-                        }
-                    }
-                }
-                binding.documentContainer.addView(
-                    imagePageView,
-                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT
-                )
-            }
-            imagePageView?.visibility = View.VISIBLE
-            imagePageView?.openFile(file, ReadBook.durChapterIndex)
         }
     }
 
@@ -1317,35 +1274,6 @@ class ReadBookActivity : BaseReadBookActivity(),
                 startDocTimer()
             }
             readNextDocxSentence()
-        } else if (isImageBook(book)) {
-            val imgView = imagePageView ?: return
-            val sentences = imgView.getSentences()
-            if (sentences.isEmpty()) {
-                toastOnUi("当前图片未提取到朗读文本（OCR识别中或无文字）")
-                return
-            }
-            if (docSentenceIndex !in sentences.indices) {
-                docSentenceIndex = if (imgView.currentSentenceIndex in sentences.indices) imgView.currentSentenceIndex else 0
-            }
-            if (docSentenceIndex > 0) {
-                lastMatchedImageSentenceIndex = SentenceMatcher.fastForwardCursor(
-                    candidates = sentences,
-                    textOf = { it.text },
-                    targetSentences = sentences.map { it.text },
-                    start = docSentenceIndex
-                )
-            } else {
-                lastMatchedImageSentenceIndex = -1
-            }
-            isDocReadingAloud = true
-            acquireDocWakeLock()
-            postEvent(EventBus.ALOUD_STATE, Status.PLAY)
-            showReadAloudDialog()
-            if (AppConfig.ttsTimer > 0) {
-                docTimerMinute = AppConfig.ttsTimer
-                startDocTimer()
-            }
-            readNextImageSentence()
         }
     }
 
@@ -1385,45 +1313,6 @@ class ReadBookActivity : BaseReadBookActivity(),
             } else {
                 stopDocumentReadAloud()
                 toastOnUi("Word 文档朗读完毕")
-            }
-        }
-    }
-
-    private fun readNextImageSentence() {
-        val imgView = imagePageView ?: return
-        if (!isDocReadingAloud) return
-        val sentences = imgView.getSentences()
-        if (docSentenceIndex in sentences.indices) {
-            val sentence = sentences[docSentenceIndex]
-            val matchedIndex = SentenceMatcher.matchSentenceIndex(
-                candidates = sentences,
-                textOf = { it.text },
-                targetText = sentence.text,
-                lastMatchedIndex = lastMatchedImageSentenceIndex
-            )
-            if (matchedIndex != -1) {
-                lastMatchedImageSentenceIndex = matchedIndex
-                imgView.highlightSentenceIndex(matchedIndex)
-            } else {
-                imgView.clearHighlights()
-            }
-            speakTtsWithCallback(sentence.text) {
-                docSentenceIndex++
-                runOnUiThread {
-                    readNextImageSentence()
-                }
-            }
-        } else {
-            docSentenceIndex = 0
-            lastMatchedImageSentenceIndex = -1
-            if (ReadBook.durChapterIndex < ReadBook.chapterSize - 1) {
-                ReadBook.moveToNextChapter(true)
-                handler.postDelayed({
-                    readNextImageSentence()
-                }, 1000)
-            } else {
-                stopDocumentReadAloud()
-                toastOnUi("图片朗读完毕")
             }
         }
     }
@@ -1516,22 +1405,6 @@ class ReadBookActivity : BaseReadBookActivity(),
                     }, 600)
                 }
             }
-        } else if (isImageBook(book)) {
-            val imgView = imagePageView ?: return
-            val sentences = imgView.getSentences()
-            if (docSentenceIndex > 0) {
-                docSentenceIndex--
-                lastMatchedImageSentenceIndex = docSentenceIndex - 1
-                readNextImageSentence()
-            } else {
-                ReadBook.moveToPrevChapter(upContent = true, toLast = false)
-                handler.postDelayed({
-                    val newSentences = imgView.getSentences()
-                    docSentenceIndex = (newSentences.size - 1).coerceAtLeast(0)
-                    lastMatchedImageSentenceIndex = docSentenceIndex - 1
-                    readNextImageSentence()
-                }, 1000)
-            }
         }
     }
 
@@ -1567,20 +1440,6 @@ class ReadBookActivity : BaseReadBookActivity(),
                         readNextDocxSentence()
                     }, 600)
                 }
-            }
-        } else if (isImageBook(book)) {
-            val imgView = imagePageView ?: return
-            val sentences = imgView.getSentences()
-            if (docSentenceIndex < sentences.size - 1) {
-                docSentenceIndex++
-                readNextImageSentence()
-            } else {
-                docSentenceIndex = 0
-                lastMatchedImageSentenceIndex = -1
-                ReadBook.moveToNextChapter(true)
-                handler.postDelayed({
-                    readNextImageSentence()
-                }, 1000)
             }
         }
     }
@@ -1894,7 +1753,7 @@ class ReadBookActivity : BaseReadBookActivity(),
     override fun onClickReadAloud() {
         autoPageStop()
         val book = ReadBook.book
-        if (book?.isPdf == true || book?.isDocx == true || isImageBook(book)) {
+        if (book?.isPdf == true || book?.isDocx == true) {
             if (isDocReadingAloud) {
                 isDocReadingAloud = false
                 tts?.stop()
@@ -2200,7 +2059,6 @@ class ReadBookActivity : BaseReadBookActivity(),
         pdfPageView?.clearHighlights()
         pdfPageView?.destroy()
         docxPageView?.destroy()
-        imagePageView?.clearHighlights()
         tts?.clearTts()
         textActionMenu.dismiss()
         popupAction.dismiss()

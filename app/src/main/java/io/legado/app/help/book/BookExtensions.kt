@@ -39,11 +39,8 @@ import kotlin.math.min
 val Book.isAudio: Boolean
     get() = isType(BookType.audio)
 
-val Book.isLocalImage: Boolean
-    get() = isLocal && originName.matches(Regex(".*\\.(jpg|jpeg|png|webp|bmp)$", RegexOption.IGNORE_CASE))
-
 val Book.isImage: Boolean
-    get() = isType(BookType.image) || isLocalImage
+    get() = isType(BookType.image)
 
 val Book.isLocal: Boolean
     get() {

@@ -91,7 +91,7 @@ class ReadAloudDialog : BaseDialogFragment(R.layout.dialog_read_aloud) {
     private fun initData() = binding.run {
         upPlayState()
         upTimerText(BaseReadAloudService.timeMinute)
-        val isDoc = (activity as? ReadBookActivity)?.let { it.isDocReadingAloud || ReadBook.book?.isPdf == true || ReadBook.book?.isDocx == true || ReadBook.book?.isImage == true } ?: false
+        val isDoc = (activity as? ReadBookActivity)?.let { it.isDocReadingAloud || ReadBook.book?.isPdf == true || ReadBook.book?.isDocx == true } ?: false
         val followSys = if (isDoc) false else requireContext().getPrefBoolean("ttsFollowSys", true)
         cbTtsFollowSys.isChecked = followSys
         upTtsSpeechRateEnabled(!followSys)
