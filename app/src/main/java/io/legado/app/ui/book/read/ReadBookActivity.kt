@@ -1200,7 +1200,6 @@ class ReadBookActivity : BaseReadBookActivity(),
         stopDocTimer()
         lastMatchedPdfSentenceIndex = -1
         lastMatchedDocxSentenceIndex = -1
-        lastMatchedImageSentenceIndex = -1
         postEvent(EventBus.ALOUD_STATE, Status.STOP)
     }
 
