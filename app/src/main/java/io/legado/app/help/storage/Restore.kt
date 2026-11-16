@@ -98,7 +98,7 @@ object Restore {
     }
 
     private suspend fun restore(path: String) {
-        val aes = BackupAES()
+        val aes = kotlin.runCatching { BackupAES() }.getOrNull()
         fileToListT<Book>(path, "bookshelf.json")?.let {
             it.forEach { book ->
                 book.upType()
@@ -186,7 +186,7 @@ object Restore {
         }?.runCatching {
             var json = readText()
             if (!json.isJsonArray()) {
-                json = aes.decryptStr(json)
+                json = aes?.runCatching { decryptStr(json) }?.getOrNull() ?: json
             }
             GSON.fromJsonArray<Server>(json).getOrNull()?.let {
                 appDb.serverDao.insert(*it.toTypedArray())
@@ -250,7 +250,7 @@ object Restore {
                     when (key) {
                         PreferKey.webDavPassword -> {
                             kotlin.runCatching {
-                                aes.decryptStr(value.toString())
+                                aes?.decryptStr(value.toString())
                             }.getOrNull()?.let {
                                 edit.putString(key, it)
                             } ?: let {

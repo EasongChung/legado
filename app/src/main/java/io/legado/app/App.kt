@@ -9,6 +9,7 @@ import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.res.Configuration
 import android.os.Build
+import cn.hutool.crypto.GlobalBouncyCastleProvider
 import com.github.liuyueyi.quick.transfer.constants.TransType
 import com.jeremyliao.liveeventbus.LiveEventBus
 import com.jeremyliao.liveeventbus.logger.DefaultLogger
@@ -66,10 +67,16 @@ import java.util.logging.Level
 
 class App : Application() {
 
+    init {
+        // 禁用 Hutool 全局 BouncyCastle Provider，避免在 Android 上调用到系统残缺的 BC Provider 导致 NoSuchAlgorithmException
+        GlobalBouncyCastleProvider.setUseBouncyCastle(false)
+    }
+
     private lateinit var oldConfig: Configuration
 
     override fun onCreate() {
         super.onCreate()
+        GlobalBouncyCastleProvider.setUseBouncyCastle(false)
         CrashHandler(this)
         if (isDebuggable) {
             ThreadUtils.setThreadAssertsDisabledForTesting(true)
